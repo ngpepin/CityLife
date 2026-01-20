@@ -219,9 +219,15 @@ renderer.centerOnWorld();
 setupToolbar(state, ui);
 setupHotkeys(renderer, state);
 
+let lastCanvasSize = { w: 0, h: 0 };
 function refreshLayout() {
-    renderer.resize();
-    renderer.centerOnWorld();
+    const rect = canvas.getBoundingClientRect();
+    const w = Math.round(rect.width);
+    const h = Math.round(rect.height);
+    if (w !== lastCanvasSize.w || h !== lastCanvasSize.h) {
+        lastCanvasSize = { w, h };
+        renderer.resize();
+    }
 }
 window.addEventListener("resize", refreshLayout);
 requestAnimationFrame(refreshLayout);

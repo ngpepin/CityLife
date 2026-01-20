@@ -42,7 +42,7 @@ export function openGraphModal(state, roadGraph, metrics) {
             data: {
                 id: b.id,
                 type: b.type,
-                tooltip: b.id,     // requested: internal id on hover
+                tooltip: (b.name && b.name.trim().length) ? b.name.trim() : b.id,
                 bg: st.bg,
                 active: b.active
             },
