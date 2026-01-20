@@ -249,7 +249,7 @@ export function openGraphModal(state, roadGraph, metrics) {
             physics: {
                 enabled: true,
                 solver: "forceAtlas2Based",
-                stabilization: { enabled: false },
+                stabilization: { enabled: true, iterations: 300, updateInterval: 25, fit: false },
                 forceAtlas2Based: {
                     gravitationalConstant: -45,
                     centralGravity: 0.02,
@@ -392,9 +392,19 @@ export function openGraphModal(state, roadGraph, metrics) {
             logEvent("info", "graph_stabilization_done");
         });
 
-        setTimeout(() => {
-            try { network.moveTo({ position: { x: 0, y: 0 }, scale: 1.0 }); } catch { }
-        }, 0);
+        // Avoid auto-fit/auto-move to prevent unexpected disappearances
+
+        let keepAliveTimer = null;
+        const keepAlive = () => {
+            if (modal.classList.contains("hidden")) return;
+            const rect = cyEl.getBoundingClientRect();
+            if (rect.width < 10 || rect.height < 10) return;
+            try {
+                network.setSize(rect.width, rect.height);
+                network.redraw();
+            } catch { }
+        };
+        keepAliveTimer = setInterval(keepAlive, 1500);
 
         async function onShot() {
             await captureGraphScreenshot(network, "graph");
@@ -409,6 +419,7 @@ export function openGraphModal(state, roadGraph, metrics) {
             window.removeEventListener("keydown", esc);
             window.removeEventListener("beforeunload", onUnload);
             if (resizeObserver) resizeObserver.disconnect();
+            if (keepAliveTimer) clearInterval(keepAliveTimer);
             shotBtn.removeEventListener("click", onShot);
             distanceBtn.removeEventListener("click", toggleEdgeLengths);
             try { network.destroy(); } catch { }
@@ -444,6 +455,7 @@ export function openGraphModal(state, roadGraph, metrics) {
                     if (w !== lastSize.w || h !== lastSize.h) {
                         lastSize = { w, h };
                         logEvent("info", "graph_resize", { w, h });
+                        try { network.redraw(); } catch { }
                     }
                     if (w < 10 || h < 10) {
                         logEvent("warn", "graph_container_too_small_runtime", { w, h });

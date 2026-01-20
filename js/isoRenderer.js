@@ -8,15 +8,16 @@ export class IsoRenderer {
     this.state = state;
     this.iconCache = new Map();
 
-    this.dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-    this.resize();
-
     this.camera = {
       x: 0,
       y: 0,
       zoom: 1.0,
       rot: 0, // 0..3
     };
+
+    this.dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    this.origin = { x: 0, y: 0 };
+    this.resize(false);
 
     this.hoverTile = null;
   }
@@ -35,13 +36,26 @@ export class IsoRenderer {
     this.camera.y = -sy;
   }
 
-  resize() {
+  resize(preserveCamera = true) {
+    const oldOrigin = preserveCamera ? this.getOrigin() : null;
     const rect = this.canvas.getBoundingClientRect();
     const w = Math.max(1, Math.floor(rect.width));
     const h = Math.max(1, Math.floor(rect.height));
     this.canvas.width = Math.floor(w * this.dpr);
     this.canvas.height = Math.floor(h * this.dpr);
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+
+    this.origin = {
+      x: this.canvas.clientWidth / 2,
+      y: this.canvas.clientHeight / 2 - 60,
+    };
+
+    if (preserveCamera && oldOrigin) {
+      const newOrigin = this.getOrigin();
+      const z = this.camera.zoom || 1;
+      this.camera.x += (oldOrigin.x - newOrigin.x) / z;
+      this.camera.y += (oldOrigin.y - newOrigin.y) / z;
+    }
   }
 
   setHoverTile(tile) {
@@ -107,10 +121,7 @@ export class IsoRenderer {
   }
 
   getOrigin() {
-    return {
-      x: this.canvas.clientWidth / 2,
-      y: this.canvas.clientHeight / 2 - 60,
-    };
+    return this.origin;
   }
 
   draw() {

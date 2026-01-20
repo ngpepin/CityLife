@@ -226,7 +226,7 @@ function refreshLayout() {
     const h = Math.round(rect.height);
     if (w !== lastCanvasSize.w || h !== lastCanvasSize.h) {
         lastCanvasSize = { w, h };
-        renderer.resize();
+        renderer.resize(true);
     }
 }
 window.addEventListener("resize", refreshLayout);
