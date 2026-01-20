@@ -3,6 +3,8 @@
 CityLife is an isometric “city builder” that doubles as a **life planning simulator**.  
 Instead of optimizing zoning and taxes, you place *commitments* and *activities* as buildings, connect them by roads, and watch how your **Income**, **Happiness**, and **Wellness** evolve as a coupled network over time.
 
+![CityLife Infographic](media/infographic.png)
+
 The intent is to feel like a calm, technical instrument panel: a spatial model of your life where you can iterate quickly, inspect causality, and tune assumptions.
 
 ---
@@ -92,6 +94,123 @@ A building must be **connected to the road network** to be active (usable).
   - [ ] “what-if” scenarios (simulate changes and explain likely outcomes)
 - [ ] Explainability: advisors cite the graph paths and terms contributing to advice
 - [ ] Privacy-first: local-only mode and/or explicit user consent before sending data externally
+
+
+#### Sample prompts (content + persona)
+
+The advisor panel can support both “city edits” (model changes) and “real-world planning” (behavioral suggestions). Below are example prompts that establish persona and request structured output.
+
+**1) Moderator (balanced, experimental)**
+- “Review my current city as a life model. Identify the top three bottlenecks reducing sustainability. Propose two small, testable changes and explain the expected effect on Income, Happiness, and Wellness.”
+- “Given the current graph, which relationships are most sensitive to distance? Suggest a move plan that improves balance with minimal disruption.”
+- “Propose a weekly experiment: what to adjust in the city and what to try in real life. Define success criteria.”
+
+**2) Income advisor (runway, sustainability)**
+- “Prioritize stable income. Where is my work capacity fragile due to poor housing access or missing support nodes? Suggest changes in the city and a concrete real-world action list.”
+- “Identify which work nodes are underperforming due to road distance to housing. Provide a ranked list with distance and estimated lost income.”
+
+**3) Happiness advisor (motivation, retention)**
+- “Optimize for motivation and enjoyment without collapsing income. Where are leisure and social recovery nodes too distant from housing? Recommend placement changes and a weekly plan.”
+- “Detect patterns where factories or workload are suppressing happiness near housing. Suggest mitigations.”
+
+**4) Wellness advisor (recovery, resilience)**
+- “Treat wellness as the constraint. Where is health coverage weak (distance from housing)? Suggest the smallest city edits and real-life habits to raise wellness without losing runway.”
+- “Identify any ‘burnout risk’ clusters (high work influence, low wellness support). Recommend a rebalancing.”
+
+**5) Model calibration (meta)**
+- “The simulation feels too punitive/too generous. Suggest adjustments to \(\lambda\), \(d_{\max}\), and key coefficients to match a realistic week of effort.”
+
+#### Prompt patterns (recommended structure)
+
+To keep advice actionable, prefer prompts that request:
+
+- **A diagnosis section** (what is happening and why)
+- **A small set of changes** (2–5 edits)
+- **An explanation** (which edges/paths and coefficients drove the recommendation)
+- **A rollout plan** (step-by-step, with expected metric deltas)
+- **Confidence / assumptions** (what the advisor is assuming about the user’s life)
+
+Example:
+- “Return a JSON block with: `diagnosis`, `recommendedCityEdits`, `realWorldActions`, `expectedMetricDeltas`, `assumptions`.”
+
+---
+
+### Summarizing game state for LLMs (best practices)
+
+LLMs perform best when the simulation state is summarized in a **compact, structured, and stable** format. The goal is to convey enough information for high-quality reasoning without exceeding token budgets.
+
+#### 1) Provide a layered summary (coarse → detailed)
+
+**Layer 0: Global**
+- Grid size
+- Global parameters: \(\lambda\), \(d_{\max}\), \(\theta\)
+- Current metrics: Income/Happiness/Wellness (+ short history or deltas)
+
+**Layer 1: Nodes**
+- For each building: `id`, `category`, `active`, `pos`, `role` (optional: title/status/dates)
+- Optionally: top contributions per node (local base vector)
+
+**Layer 2: Connectivity**
+- Road network stats: number of road tiles, connected components, largest component size
+- For each active building: nearest road tile(s) and whether it connects to the main component
+
+**Layer 3: Relationships (sparse)**
+- Provide only meaningful edges:
+  - edges above threshold, or
+  - top N strongest edges per node
+- Include for each edge: `source`, `target`, `distance`, `weight`, and optionally `dominantEffects` (which metric dimensions matter most)
+
+#### 2) Use stable identifiers and explicit units
+
+- Use stable building ids (do not renumber on each run).
+- Distances should be in road steps (integer BFS length).
+- Weights should be floating-point with fixed precision (e.g., 2–3 decimals).
+
+#### 3) Prefer sparse “top edges” over full adjacency
+
+For large cities, a full edge list becomes noisy. A common strategy:
+
+- Keep top \(N\) edges per node by weight (e.g., \(N=4\))
+- Deduplicate edges by id
+- Report any nodes that have *no* edges (isolated) explicitly
+
+#### 4) Provide “attribution” for metric changes
+
+Instead of only reporting the final metrics, provide a short attribution:
+
+- top positive contributors to each metric
+- top negative contributors to each metric
+- top 3 edges by influence affecting each metric (if applicable)
+
+This improves the advisor’s ability to explain “why”.
+
+#### 5) Suggested schema (example)
+
+```json
+{
+  "globals": {
+    "grid": [20, 20],
+    "params": { "lambda": 7.5, "dMax": 18, "theta": 0.12 },
+    "metrics": { "income": 64.2, "happiness": 71.0, "wellness": 58.5 }
+  },
+  "nodes": [
+    { "id": "house_1", "cat": "Housing", "active": true, "pos": [9, 10] },
+    { "id": "office_1", "cat": "WorkCapacity", "active": true, "pos": [12, 9] }
+  ],
+  "roads": { "tiles": 42, "components": 1, "largest": 42 },
+  "edges": [
+    { "id": "house_1__office_1", "a": "house_1", "b": "office_1", "d": 5, "w": 0.51,
+      "effects": { "income": +0.12, "happiness": -0.02, "wellness": -0.01 } }
+  ],
+  "attribution": {
+    "income": { "topPlus": ["office_1"], "topMinus": [] },
+    "happiness": { "topPlus": ["park_2"], "topMinus": ["factory_1"] },
+    "wellness": { "topPlus": ["hospital_1"], "topMinus": ["factory_1"] }
+  }
+}
+```
+
+This schema is intentionally “LLM-friendly”: it is compact, stable, and supports both diagnostic reasoning and concrete recommendations.
 
 ### Longer-term (depth)
 - [ ] Multi-tile buildings and districts
