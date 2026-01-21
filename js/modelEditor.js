@@ -11,6 +11,9 @@ const GLOBAL_FIELDS = [
   { key: "dMax", label: "dMax", note: "Max useful road distance" },
   { key: "lambda", label: "lambda", note: "Exponential falloff scale" },
   { key: "theta", label: "theta", note: "Edge threshold" },
+  { key: "decayRate", label: "decayRate", note: "Disrepair per step (inactive for now)" },
+  { key: "repairRate", label: "repairRate", note: "Repair per step (inactive for now)" },
+  { key: "failThreshold", label: "failThreshold", note: "Failure threshold (inactive)" },
   { key: "happinessMin", label: "H_min", note: "Happiness min" },
   { key: "happinessMax", label: "H_max", note: "Happiness max" },
   { key: "wellnessMin", label: "W_min", note: "Wellness min" },
@@ -28,6 +31,7 @@ const INSTRUCTIONS = {
     <ul>
       <li><b>dMax</b> and <b>lambda</b> control distance influence decay.</li>
       <li><b>theta</b> filters weak edges in the graph.</li>
+      <li><b>decayRate</b>, <b>repairRate</b>, <b>failThreshold</b> are reserved for disrepair (currently inactive).</li>
       <li><b>H/W bounds</b> clamp values after each update.</li>
       <li><b>H/W base</b> set starting baselines.</li>
     </ul>

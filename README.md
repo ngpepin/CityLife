@@ -91,6 +91,12 @@ If you want to use this project commercially, please contact the author to discu
   - [ ] edit start/end dates, milestones, dependencies
   - [ ] propagate schedule metadata back to buildings
 
+### Mid-term (maintenance & decay)
+- [ ] **Maintenance decay**: buildings accumulate disrepair when no time is logged
+- [ ] **Contribution erosion**: disrepair scales down base + pairwise effects
+- [ ] **Failure events**: prolonged neglect can trigger fire/collapse states
+- [ ] **Recovery loop**: logging time restores condition and effects
+
 
 ### Advisors (LLM Agent Support)
 - [ ] Omnipresent advisor panel (chat-style) with context of the city-as-life metaphor
@@ -250,6 +256,7 @@ Each building \( i \in \mathcal{B} \) has:
 - type/category \( t(i) \)
 - location \( (x_i, y_i) \)
 - active flag \( a_i \in \{0,1\} \) (active if adjacent to a road)
+- maintenance/condition factor \( m_i \in [0,1] \) (1 = fully maintained, 0 = disrepair)
 - optional metadata (later: title, status, dates, etc.)
 
 Define road shortest-path distance \( d_{ij} \) between buildings \( i \) and \( j \) as:
@@ -299,7 +306,7 @@ The simulator computes metrics as a baseline plus local (node) effects plus pair
 Each category \( c \) has a base contribution vector \( \mathbf{b}_c \):
 
 \[
-\Delta \mathbf{M}_{\text{node}} = \sum_{i \in \mathcal{B}} a_i \,\mathbf{b}_{t(i)}
+\Delta \mathbf{M}_{\text{node}} = \sum_{i \in \mathcal{B}} a_i \, m_i \, \mathbf{b}_{t(i)}
 \]
 
 Examples:
@@ -326,7 +333,7 @@ Meaning: “how much category \( u \) influences category \( c \)” for each me
 Then total pairwise effect is:
 
 \[
-\Delta \mathbf{M}_{\text{pair}} = \sum_{i \ne j} w_{ij}\,\mathbf{K}_{t(i),\,t(j)}
+\Delta \mathbf{M}_{\text{pair}} = \sum_{i \ne j} w_{ij}\, m_i \, m_j \, \mathbf{K}_{t(i),\,t(j)}
 \]
 
 This term encodes effects like:
@@ -344,6 +351,21 @@ A simple bounded update is:
 \]
 
 Where clip clamps each component to desired bounds (e.g., happiness and wellness in \([0,100]\)).
+
+### Disrepair dynamics (maintenance decay)
+
+Each building carries a maintenance/condition factor \( m_i \in [0,1] \) that decays over time if no effort is logged against it. A minimal update rule can be:
+
+\[
+m_i(t+1) = \mathrm{clip}\big(m_i(t) + \alpha\,\ell_i(t) - \beta,\; 0,\; 1\big)
+\]
+
+Where:
+- \( \ell_i(t) \in [0,1] \) is “maintenance time logged” for building \( i \) during the step.
+- \( \alpha \) is the repair rate.
+- \( \beta \) is the decay rate.
+
+If \( m_i \) falls below a critical threshold \( m_{\text{fail}} \), the building can enter a “failure” state (e.g., fire/collapse) and its contributions drop to zero until restored.
 
 > **Note:** The current implementation uses practical heuristics rather than a fully parameterized tensor everywhere.  
 > The roadmap includes a spreadsheet model editor to externalize these weights.
