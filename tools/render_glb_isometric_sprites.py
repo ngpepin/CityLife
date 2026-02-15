@@ -3,7 +3,7 @@
 
 Usage:
   /home/npepin/Projects/CityLife/.venv/bin/python tools/render_glb_isometric_sprites.py \
-    --input assets/assets-GLB/in-good-order \
+    --input assets/GLB/in-good-order \
     --output assets/glb-sprites \
     --size 256
 """
@@ -129,7 +129,7 @@ def render_glb(input_path: Path, output_path: Path, size: int) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Render GLB files to isometric PNG sprites.")
-    parser.add_argument("--input", default="assets/assets-GLB/in-good-order", help="Input folder with subfolders")
+    parser.add_argument("--input", default="assets/GLB/in-good-order", help="Input folder with subfolders")
     parser.add_argument("--output", default="assets/glb-sprites", help="Output folder for PNG sprites")
     parser.add_argument("--size", type=int, default=256, help="Output image size (square) in pixels")
     args = parser.parse_args()

@@ -2,12 +2,17 @@ import { clamp, lerp } from "./utils.js";
 import { CONFIG } from "./config.js";
 
 export class IsoRenderer {
+  static SPRITE_TYPES = new Set(["house", "school", "office", "factory", "hospital", "mall", "park"]);
+
   constructor(canvas, state) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.state = state;
     this.iconCache = new Map();
     this.spriteCache = new Map();
+    this.spriteMetaCache = new Map();
+    this.spriteState = new Map();
+    this.spriteWarned = new Set();
     this.tintedSpriteCache = new Map();
 
     this.camera = {
@@ -323,6 +328,24 @@ export class IsoRenderer {
     };
   }
 
+  getBuildingFacingDirection(b) {
+    const mask = this.roadMask(b.x, b.y);
+    // Prefer roads on the "front" half-plane for the current isometric look.
+    const options = ["s", "e", "w", "n"];
+    for (const d of options) {
+      if (mask[d]) return d;
+    }
+    return "s";
+  }
+
+  rotateDirClockwise(dir, steps) {
+    const order = ["n", "e", "s", "w"];
+    const i = order.indexOf(dir);
+    if (i < 0) return "s";
+    const n = ((steps % 4) + 4) % 4;
+    return order[(i + n) % 4];
+  }
+
   drawBuilding(id) {
     const ctx = this.ctx;
     const b = this.state.buildings.get(id);
@@ -332,11 +355,23 @@ export class IsoRenderer {
     const tw = CONFIG.tileW * this.camera.zoom;
     const th = CONFIG.tileH * this.camera.zoom;
 
-    const spriteSpec = this.getBuildingSpriteSpec(b.type);
+    const worldFacing = this.getBuildingFacingDirection(b);
+    const screenFacing = this.rotateDirClockwise(worldFacing, this.camera.rot);
+    const spriteSpec = this.getBuildingSpriteSpec(b.type, screenFacing);
     if (spriteSpec) {
       const tintColor = this.state.getBuildingColors(b.type)?.top || "#ffffff";
-      const drew = this.drawBuildingSprite(spriteSpec, p.x, p.y, tw, th, b.active, tintColor);
-      if (drew) return;
+      const spriteStatus = this.drawBuildingSprite(spriteSpec, p.x, p.y, tw, th, b.active, tintColor);
+      if (spriteStatus === "drawn") return;
+      if (spriteStatus === "pending") return;
+      if (spriteStatus === "error") {
+        this.drawMissingSpriteMarker(p.x, p.y, tw, th);
+        return;
+      }
+    }
+
+    if (IsoRenderer.SPRITE_TYPES.has(b.type)) {
+      this.drawMissingSpriteMarker(p.x, p.y, tw, th);
+      return;
     }
 
     if (b.type === "park") {
@@ -513,23 +548,119 @@ export class IsoRenderer {
     ctx.restore();
   }
 
-  getBuildingSpriteSpec(type) {
+  getBuildingSpriteSpec(type, facing = "s") {
     const sprites = CONFIG.buildingSprites;
-    if (!sprites) return null;
-    const spec = sprites[type];
-    if (!spec) return null;
+    const spec = sprites?.[type];
+    const fallbackName = type === "school" ? "university" : type;
+    const fallbackScale = {
+      house: 0.42,
+      school: 0.42,
+      office: 0.44,
+      factory: 0.41,
+      hospital: 0.41,
+      mall: 0.41,
+      park: 0.40,
+    };
+    const fallback = IsoRenderer.SPRITE_TYPES.has(type)
+      ? {
+          src: `assets/glb-sprites/dir/${fallbackName}_${facing}.png`,
+          scale: fallbackScale[type] ?? 0.42,
+          xOffset: 0,
+          yOffset: 0,
+          tint: false,
+        }
+      : null;
+
+    if (!spec) return fallback;
     if (typeof spec === "string") return { src: spec };
+    if (spec.dirs && typeof spec.dirs === "object") {
+      const src =
+        spec.dirs[facing] ||
+        spec.dirs.s ||
+        spec.dirs.e ||
+        spec.dirs.w ||
+        spec.dirs.n ||
+        spec.src ||
+        fallback?.src;
+      if (!src) return fallback;
+      return { ...spec, src };
+    }
     return spec;
   }
 
   getSpriteImage(src) {
     if (!src) return null;
-    if (this.spriteCache.has(src)) return this.spriteCache.get(src);
+    const version = CONFIG.assetVersion;
+    const resolvedSrc = version
+      ? `${src}${src.includes("?") ? "&" : "?"}v=${encodeURIComponent(version)}`
+      : src;
+    if (this.spriteCache.has(resolvedSrc)) return this.spriteCache.get(resolvedSrc);
     const img = new Image();
     img.decoding = "async";
-    img.src = src;
-    this.spriteCache.set(src, img);
+    this.spriteState.set(resolvedSrc, "loading");
+    img.onload = () => {
+      this.spriteState.set(resolvedSrc, "ready");
+    };
+    img.onerror = () => {
+      this.spriteState.set(resolvedSrc, "error");
+      if (!this.spriteWarned.has(resolvedSrc)) {
+        this.spriteWarned.add(resolvedSrc);
+        // keep this lightweight and one-time per asset
+        console.warn(`Sprite failed to load: ${resolvedSrc}`);
+      }
+    };
+    img.src = resolvedSrc;
+    this.spriteCache.set(resolvedSrc, img);
     return img;
+  }
+
+  getSpriteMeta(img) {
+    if (!img || !img.naturalWidth || !img.naturalHeight) return null;
+    const key = img.src;
+    if (this.spriteMetaCache.has(key)) return this.spriteMetaCache.get(key);
+
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0);
+    const data = ctx.getImageData(0, 0, w, h).data;
+
+    let minX = w;
+    let minY = h;
+    let maxX = -1;
+    let maxY = -1;
+    const alphaMin = 8;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const a = data[(y * w + x) * 4 + 3];
+        if (a > alphaMin) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+
+    // Fallback when image is unexpectedly empty.
+    if (maxX < minX || maxY < minY) {
+      const fallback = {
+        centerX: w / 2,
+        bottomY: h,
+      };
+      this.spriteMetaCache.set(key, fallback);
+      return fallback;
+    }
+
+    const meta = {
+      centerX: (minX + maxX + 1) * 0.5,
+      bottomY: maxY + 1,
+    };
+    this.spriteMetaCache.set(key, meta);
+    return meta;
   }
 
   getTintedSprite(img, tintColor, alpha = 0.35) {
@@ -554,8 +685,13 @@ export class IsoRenderer {
   drawBuildingSprite(spec, cx, cy, tw, th, active, tintColor) {
     const ctx = this.ctx;
     const img = this.getSpriteImage(spec.src);
-    if (!img || !img.complete) return false;
-    if (img.naturalWidth === 0 || img.naturalHeight === 0) return false;
+    if (!img) return "pending";
+    const state = this.spriteState.get(img.src);
+    if (state === "error") return "error";
+    if (!img.complete) return "pending";
+    if (img.naturalWidth === 0 || img.naturalHeight === 0) return "error";
+    const meta = this.getSpriteMeta(img);
+    if (!meta) return "error";
 
     const scale = (spec.scale ?? 1) * this.camera.zoom;
     const xOffset = (spec.xOffset ?? 0) * this.camera.zoom;
@@ -563,20 +699,44 @@ export class IsoRenderer {
 
     const w = img.naturalWidth * scale;
     const h = img.naturalHeight * scale;
-    const x = cx - w / 2 + xOffset;
-    const y = cy - h + th * 0.20 + yOffset;
+    const anchorX = cx + xOffset;
+    const anchorY = cy + th * 0.5 + yOffset;
+    const drawX = -meta.centerX * scale;
+    const drawY = -meta.bottomY * scale;
 
     const useTint = spec.tint !== false;
     const tintAlpha = spec.tintAlpha ?? 0.35;
     const sprite = useTint ? this.getTintedSprite(img, tintColor, tintAlpha) : img;
-    if (!sprite) return false;
+    if (!sprite) return "error";
 
     ctx.save();
     ctx.globalAlpha = active ? 1 : 0.85;
     ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(sprite, x, y, w, h);
+    ctx.translate(anchorX, anchorY);
+    // Alpha-content anchoring keeps the asset seated on one tile.
+    ctx.drawImage(sprite, drawX, drawY, w, h);
     ctx.restore();
-    return true;
+    return "drawn";
+  }
+
+  drawMissingSpriteMarker(cx, cy, tw, th) {
+    const ctx = this.ctx;
+    const r = Math.max(4, tw * 0.06);
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = "rgba(240,80,80,0.9)";
+    ctx.beginPath();
+    ctx.arc(cx, cy + th * 0.2, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(cx - r * 0.5, cy + th * 0.2 - r * 0.5);
+    ctx.lineTo(cx + r * 0.5, cy + th * 0.2 + r * 0.5);
+    ctx.moveTo(cx + r * 0.5, cy + th * 0.2 - r * 0.5);
+    ctx.lineTo(cx - r * 0.5, cy + th * 0.2 + r * 0.5);
+    ctx.stroke();
+    ctx.restore();
   }
 
 

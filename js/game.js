@@ -1,12 +1,12 @@
-import { CONFIG } from "./config.js";
-import { uid, clamp, inBounds } from "./utils.js";
-import { IsoRenderer } from "./isoRenderer.js";
-import { RoadGraph } from "./pathfinding.js";
-import { computeMetrics } from "./metrics.js";
-import { UI } from "./ui.js";
-import { initDebug, logEvent, captureCanvasScreenshot } from "./debugTools.js";
-import { openModelEditor } from "./modelEditor.js";
-import { openBuildingEditor } from "./buildingEditor.js";
+import { CONFIG } from "./config.js?v=2026-02-15-renderer-hotfix-1";
+import { uid, clamp, inBounds } from "./utils.js?v=2026-02-15-renderer-hotfix-1";
+import { IsoRenderer } from "./isoRenderer.js?v=2026-02-15-renderer-hotfix-1";
+import { RoadGraph } from "./pathfinding.js?v=2026-02-15-renderer-hotfix-1";
+import { computeMetrics } from "./metrics.js?v=2026-02-15-renderer-hotfix-1";
+import { UI } from "./ui.js?v=2026-02-15-renderer-hotfix-1";
+import { initDebug, logEvent, captureCanvasScreenshot } from "./debugTools.js?v=2026-02-15-renderer-hotfix-1";
+import { openModelEditor } from "./modelEditor.js?v=2026-02-15-renderer-hotfix-1";
+import { openBuildingEditor } from "./buildingEditor.js?v=2026-02-15-renderer-hotfix-1";
 
 // -----------------------
 // Game State
@@ -383,7 +383,7 @@ document.getElementById("graphBtn").addEventListener("click", () => {
     // refresh metrics before opening graph
     recompute();
     logEvent("info", "graph_open", { buildings: state.buildings.size });
-    import("./graphView.js")
+    import("./graphView.js?v=2026-02-15-renderer-hotfix-1")
         .then(mod => mod.openGraphModal(state, roadGraph, metrics))
         .catch(err => {
             logEvent("error", "graph_open_failed", { error: String(err) });
