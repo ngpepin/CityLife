@@ -4,8 +4,11 @@
   "private": true,
   "license": "MIT",
   "scripts": {
+    "predev": "node scripts/sync-citylife-config.mjs",
     "dev": "next dev",
+    "prebuild": "node scripts/sync-citylife-config.mjs",
     "build": "npm run compress-images && next build",
+    "prestart": "node scripts/sync-citylife-config.mjs",
     "start": "next start",
     "lint": "eslint .",
     "crop-screenshots": "bash scripts/crop-screenshots.sh",

@@ -4,6 +4,7 @@ import React, { useMemo, useRef, useState, useEffect, useCallback } from 'react'
 import Link from 'next/link';
 import { CanvasIsometricGrid } from '@/components/game/CanvasIsometricGrid';
 import { OverlayMode } from '@/components/game/types';
+import { CityLifeRelationshipGraphModal } from '@/components/citylife/CityLifeRelationshipGraphModal';
 import { useGame } from '@/context/GameContext';
 import {
   CITYLIFE_SPRITE_PACK_ID,
@@ -55,9 +56,11 @@ function ToolButton({
 }
 
 export function CityLifeMode() {
-  const { state, setTool, loadState, setSpritePack, currentSpritePack } = useGame();
+  const { state, setTool, loadState, setSpritePack, currentSpritePack, isStateReady } = useGame();
   const [selectedTile, setSelectedTile] = useState<{ x: number; y: number } | null>(null);
-  const initRef = useRef(false);
+  const [graphOpen, setGraphOpen] = useState(false);
+  const starterInitRef = useRef(false);
+  const starterRetryRef = useRef(false);
   const overlayMode: OverlayMode = 'none';
 
   const resetToStarterCity = useCallback(() => {
@@ -81,16 +84,23 @@ export function CityLifeMode() {
     };
   }, [setSpritePack]); // Intentionally run once per CityLife mount
 
-  useEffect(() => {
-    if (initRef.current) return;
-    initRef.current = true;
-    resetToStarterCity();
-  }, [resetToStarterCity]);
-
   const snapshot = useMemo(
     () => calculateCityLifeSnapshot(state.grid, state.gridSize),
     [state.grid, state.gridSize],
   );
+
+  useEffect(() => {
+    if (!isStateReady || starterInitRef.current) return;
+    starterInitRef.current = true;
+    resetToStarterCity();
+  }, [isStateReady, resetToStarterCity]);
+
+  useEffect(() => {
+    if (!isStateReady || !starterInitRef.current || starterRetryRef.current) return;
+    if (snapshot.totalNodes > 0) return;
+    starterRetryRef.current = true;
+    resetToStarterCity();
+  }, [isStateReady, snapshot.totalNodes, resetToStarterCity]);
 
   const selectedNode = useMemo(() => {
     if (!selectedTile) return null;
@@ -147,6 +157,14 @@ export function CityLifeMode() {
           className="mt-2 w-full rounded-md border border-white/15 bg-white/5 px-3 py-2 text-sm hover:bg-white/10"
         >
           Reset City
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setGraphOpen(true)}
+          className="mt-2 w-full rounded-md border border-cyan-300/30 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100 hover:bg-cyan-500/20"
+        >
+          Relationship Graph
         </button>
 
         <div className="mt-6 rounded-md border border-white/10 bg-slate-900/70 p-3">
@@ -215,6 +233,13 @@ export function CityLifeMode() {
           />
         </div>
       </section>
+
+      {graphOpen && (
+        <CityLifeRelationshipGraphModal
+          onClose={() => setGraphOpen(false)}
+          snapshot={snapshot}
+        />
+      )}
     </div>
   );
 }

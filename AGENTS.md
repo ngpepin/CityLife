@@ -13,6 +13,22 @@ Do not migrate work back to the old plain-HTML prototype.
 
 Use `isometric-city/` as the active runtime and development target, and keep changes incremental.
 
+### 0.1 Isolation/Decoupling Goal
+
+Treat `isometric-city` as an engine resource, not the primary home of CityLife customization.
+
+When possible:
+
+- keep CityLife-specific config/content/code at repo root or in root-adjacent CityLife folders
+- avoid tightly coupling CityLife behavior to deep engine plumbing
+- integrate through thin adapters and sync steps rather than invasive engine rewrites
+
+Preferred pattern:
+
+- root-owned CityLife source-of-truth files
+- runtime/build-time sync into `isometric-city` only where required by framework constraints
+- keep synchronization scripts explicit and documented
+
 ---
 
 ## 1) Product Intent
@@ -61,6 +77,7 @@ Unless explicitly changed by product direction, preserve these:
 
 - `README.md` and `AGENTS.md`: repo-level docs (this file)
 - `citylife-config/citylifeSpriteMapping.json`: CityLife sprite/category source-of-truth config
+- `run_citylife.sh`: root launcher for dev/build/prod flows
 - `old-approach/`: archived pre-engine prototype
 - `paper/`: concept and paper drafts
 
@@ -118,7 +135,7 @@ CityLife uses the modern sprite pack configured in `src/lib/citylife.ts`:
 
 - `CITYLIFE_SPRITE_PACK_ID = "sprites4-ages-modern"`
 - Category-to-grid coordinate overrides live in `citylife-config/citylifeSpriteMapping.json`
-- `isometric-city/src/config/citylifeSpriteMapping.json` is a symlink to the root config file
+- `isometric-city/src/config/citylifeSpriteMapping.json` is generated from the root config by `isometric-city/scripts/sync-citylife-config.mjs` (`predev`, `prebuild`, `prestart`)
 
 If visuals regress to placeholder/procedural output:
 
@@ -171,6 +188,7 @@ When something looks wrong, use this order:
 - Do not re-introduce root-level plain-ESM renderer work as the active app.
 - Do not add a parallel second runtime for CityLife unless explicitly requested.
 - Do not rewrite large engine subsystems when a local integration change is sufficient.
+- Do not bury new CityLife-only configuration deep inside engine directories when a root-level source-of-truth is feasible.
 
 ---
 
@@ -180,5 +198,6 @@ When implementing:
 
 1. Prefer small, localized edits.
 2. Keep behavior changes explicit and testable.
-3. Update docs when changing CityLife invariants or controls.
-4. Preserve compatibility with upstream IsoCity mode unless intentionally changed.
+3. Prefer root-owned CityLife files plus explicit sync into `isometric-city` over hard-coding directly in engine internals.
+4. Update docs/scripts whenever sync behavior or source-of-truth paths change.
+5. Preserve compatibility with upstream IsoCity mode unless intentionally changed.

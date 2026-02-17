@@ -140,7 +140,26 @@ You can:
 
 Rendering uses deterministic per-tile selection from the list so variants stay stable.
 
-For app compatibility, `isometric-city/src/config/citylifeSpriteMapping.json` is a symlink to this root file.
+For app compatibility, `isometric-city/src/config/citylifeSpriteMapping.json` is synced from the root file by:
+
+- `isometric-city/scripts/sync-citylife-config.mjs`
+- automatic npm lifecycle hooks: `predev`, `prebuild`, and `prestart`
+
+## Decoupling Architecture
+
+CityLife aims to use `isometric-city` as an engine resource, not as the primary home for CityLife-specific logic and configuration.
+
+Practical rules:
+
+- prefer root-owned CityLife files for source-of-truth config and project-specific assets
+- keep `isometric-city` integration shallow through adapters/sync scripts
+- avoid deep engine rewrites when a root-level override or mapping can solve the need
+
+Current pattern in this repo:
+
+- edit CityLife sprite/category mapping at `citylife-config/citylifeSpriteMapping.json`
+- sync into engine runtime path via `isometric-city/scripts/sync-citylife-config.mjs`
+- run through `./run_citylife.sh` or normal npm scripts (`predev`, `prebuild`, `prestart` sync automatically)
 
 ## Repository Layout
 
