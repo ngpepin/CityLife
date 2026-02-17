@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "enabled": true,
+  "applyWhenSpritePackId": "sprites4-ages-modern",
+  "sheets": {
+    "modern": {
+      "src": "/assets/ages/modern.png",
+      "cols": 5,
+      "rows": 6
+    },
+    "dense": {
+      "src": "/assets/sprites_red_water_new_dense.png",
+      "cols": 5,
+      "rows": 6
+    }
+  },
+  "categories": {
+    "house": {
+      "buildingTypes": [
+        "house_small",
+        "house_medium",
+        "cabin_house",
+        "mansion",
+        "apartment_low",
+        "apartment_high"
+      ],
+      "sprites": [
+        { "sheet": "modern", "row": 3, "col": 3 },
+        { "sheet": "modern", "row": 3, "col": 1 },
+        { "sheet": "modern", "row": 3, "col": 2 }
+      ]
+    },
+    "school": {
+      "buildingTypes": [
+        "school",
+        "university"
+      ],
+      "sprites": [
+        { "sheet": "modern", "row": 1, "col": 4 },
+        { "sheet": "modern", "row": 2, "col": 0 }
+      ]
+    },
+    "office": {
+      "buildingTypes": [
+        "office_building_small",
+        "office_low",
+        "office_high"
+      ],
+      "sprites": [
+        { "sheet": "modern", "row": 0, "col": 1 },
+        { "sheet": "dense", "row": 2, "col": 0 },
+        { "sheet": "dense", "row": 2, "col": 1 },
+        { "sheet": "dense", "row": 2, "col": 2 },
+        { "sheet": "dense", "row": 3, "col": 0 },
+        { "sheet": "dense", "row": 3, "col": 1 },
+        { "sheet": "dense", "row": 3, "col": 3 }
+      ]
+    },
+    "factory": {
+      "buildingTypes": [
+        "factory_small",
+        "factory_medium",
+        "factory_large",
+        "warehouse",
+        "power_plant"
+      ],
+      "sprites": [
+        { "sheet": "modern", "row": 4, "col": 1 },
+        { "sheet": "modern", "row": 4, "col": 2 },
+        { "sheet": "modern", "row": 4, "col": 3 },
+        { "sheet": "modern", "row": 4, "col": 4 },
+        { "sheet": "dense", "row": 4, "col": 0 },
+        { "sheet": "dense", "row": 4, "col": 2 },
+        { "sheet": "dense", "row": 4, "col": 4 }
+      ]
+    },
+    "hospital": {
+      "buildingTypes": [
+        "hospital"
+      ],
+      "sprites": [
+        { "sheet": "modern", "row": 0, "col": 4 }
+      ]
+    },
+    "mall": {
+      "buildingTypes": [
+        "shop_small",
+        "shop_medium",
+        "mall"
+      ],
+      "sprites": [
+        { "sheet": "dense", "row": 3, "col": 1 },
+        { "sheet": "dense", "row": 2, "col": 2 },
+        { "sheet": "dense", "row": 2, "col": 3 },
+        { "sheet": "dense", "row": 2, "col": 4 },
+        { "sheet": "modern", "row": 3, "col": 4 },
+        { "sheet": "modern", "row": 4, "col": 0 }
+      ]
+    },
+    "park": {
+      "buildingTypes": [
+        "park",
+        "park_large",
+        "tennis"
+      ],
+      "sprites": [
+        { "sheet": "modern", "row": 1, "col": 0 },
+        { "sheet": "modern", "row": 1, "col": 1 },
+        { "sheet": "modern", "row": 1, "col": 2 }
+      ]
+    }
+  }
+}

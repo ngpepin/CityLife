@@ -5,6 +5,7 @@ import { useMessages, T, Var, useGT } from 'gt-next';
 import { useGame } from '@/context/GameContext';
 import { TOOL_INFO, Tile, Building, BuildingType, AdjacentCity, Tool } from '@/types/game';
 import { getBuildingSize, requiresWaterAdjacency, getWaterAdjacency } from '@/lib/simulation';
+import { getCityLifeSpriteMappingSheetSources } from '@/lib/citylifeSpriteMapping';
 import { FireIcon, SafetyIcon } from '@/components/ui/Icons';
 import { getSpriteCoords, BUILDING_TO_SPRITE, SPRITE_VERTICAL_OFFSETS, SPRITE_HORIZONTAL_OFFSETS, getActiveSpritePack } from '@/lib/renderConfig';
 import { selectSpriteSource, calculateSpriteCoords, calculateSpriteScale, calculateSpriteOffsets, getSpriteRenderInfo } from '@/components/game/buildingSprite';
@@ -910,6 +911,11 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
       }
       if (currentSpritePack.mansionsSrc) {
         loadSpriteImage(currentSpritePack.mansionsSrc, true).catch(console.error);
+      }
+      // Load any extra JSON-mapped CityLife sprite sheets
+      const cityLifeMappedSheets = getCityLifeSpriteMappingSheetSources(currentSpritePack);
+      for (const src of cityLifeMappedSheets) {
+        loadSpriteImage(src, true).catch(console.error);
       }
       // Load airplane sprite sheet (always loaded, not dependent on sprite pack)
       loadSpriteImage(AIRPLANE_SPRITE_SRC, false).catch(console.error);

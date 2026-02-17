@@ -10,3 +10,9 @@ chat.md
 isometric-city/.git_OLD/
 **/.git_OLD/
 .venv
+assets/CityLife_PotentialAssets.7z
+assets/assets-OBJ.zip
+isometric-city/node_modules/
+isometric-city/.next/
+isometric-city/next-env.d.ts
+isometric-city/tsconfig.tsbuildinfo

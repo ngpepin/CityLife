@@ -8,6 +8,7 @@
 
 import { Building, BuildingType } from '@/types/game';
 import { SpritePack, getActiveSpritePack, getSpriteCoords, BUILDING_TO_SPRITE, SPRITE_VERTICAL_OFFSETS, SPRITE_HORIZONTAL_OFFSETS } from '@/lib/renderConfig';
+import { getCityLifeMappedSpriteForBuilding } from '@/lib/citylifeSpriteMapping';
 import { getBuildingSize, requiresWaterAdjacency } from '@/lib/simulation';
 import { TILE_WIDTH, TILE_HEIGHT } from './types';
 
@@ -20,9 +21,9 @@ export interface SpriteSourceResult {
   /** Path to the sprite sheet to use */
   source: string;
   /** Type of variant being used */
-  variantType: 'normal' | 'construction' | 'abandoned' | 'parks' | 'parksConstruction' | 'dense' | 'modern' | 'farm' | 'shop' | 'station' | 'services' | 'infrastructure' | 'mansion';
+  variantType: 'normal' | 'construction' | 'abandoned' | 'parks' | 'parksConstruction' | 'dense' | 'modern' | 'farm' | 'shop' | 'station' | 'services' | 'infrastructure' | 'mansion' | 'citylifeMapped';
   /** Variant coordinates if using a variant sheet (row, col) */
-  variant: { row: number; col: number } | null;
+  variant: { row: number; col: number; cols?: number; rows?: number } | null;
 }
 
 /** Sprite coordinates within a sheet */
@@ -85,6 +86,21 @@ export function selectSpriteSource(
   const constructionProgress = building.constructionProgress ?? 100;
   const isConstructionPhase = isUnderConstruction && constructionProgress >= 40;
   const isAbandoned = building.abandoned === true;
+
+  // CityLife JSON-driven category mapping override
+  const mappedSprite = getCityLifeMappedSpriteForBuilding(buildingType, tileX, tileY, activePack);
+  if (mappedSprite) {
+    return {
+      source: mappedSprite.source,
+      variantType: 'citylifeMapped',
+      variant: {
+        row: mappedSprite.row,
+        col: mappedSprite.col,
+        cols: mappedSprite.cols,
+        rows: mappedSprite.rows,
+      },
+    };
+  }
   
   // Check if this is a parks building
   const isParksBuilding = !!(activePack.parksBuildings && activePack.parksBuildings[buildingType]);
@@ -285,6 +301,21 @@ export function calculateSpriteCoords(
   activePack: SpritePack = getActiveSpritePack()
 ): SpriteCoords | null {
   const { variantType, variant } = source;
+
+  // CityLife JSON-driven category mapping coordinates
+  if (variantType === 'citylifeMapped' && variant) {
+    const cols = variant.cols || activePack.cols;
+    const rows = variant.rows || activePack.rows;
+    const tileWidth = Math.floor(sheetWidth / cols);
+    const tileHeight = Math.floor(sheetHeight / rows);
+
+    return {
+      sx: variant.col * tileWidth,
+      sy: variant.row * tileHeight,
+      sw: tileWidth,
+      sh: tileHeight,
+    };
+  }
   
   // Parks buildings (including parks construction)
   if ((variantType === 'parks' || variantType === 'parksConstruction') && variant) {
