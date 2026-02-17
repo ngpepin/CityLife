@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Life City Builder (Isometric)</title>
+  <link rel="stylesheet" href="styles.css" />
+  <!-- vis-network (MIT) for interactive graph w/ physics -->
+  <script src="https://unpkg.com/vis-network@9.1.9/dist/vis-network.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">🏙️</div>
+        <div>
+          <div class="title">Life City Builder</div>
+          <div class="subtitle">Build your life like a city: balance work & self-care.</div>
+        </div>
+      </div>
+
+      <div class="hud">
+        <div class="metric">
+          <div class="metric-label">
+            <span>Income</span><span id="incomeVal" class="metric-val">0</span>
+          </div>
+          <div class="bar"><div id="incomeBar" class="fill"></div></div>
+          <canvas id="incomeSpark" width="140" height="26"></canvas>
+        </div>
+
+        <div class="metric">
+          <div class="metric-label">
+            <span>Happiness</span><span id="happyVal" class="metric-val">0</span>
+          </div>
+          <div class="bar"><div id="happyBar" class="fill"></div></div>
+          <canvas id="happySpark" width="140" height="26"></canvas>
+        </div>
+
+        <div class="metric">
+          <div class="metric-label">
+            <span>Wellness</span><span id="wellVal" class="metric-val">0</span>
+          </div>
+          <div class="bar"><div id="wellBar" class="fill"></div></div>
+          <canvas id="wellSpark" width="140" height="26"></canvas>
+        </div>
+      </div>
+    </header>
+
+    <aside class="toolbar">
+      <div class="toolgroup">
+        <div class="toolgroup-title">Tools</div>
+        <button class="toolbtn" data-tool="road" title="Paint roads">🛣️ Road</button>
+        <button class="toolbtn" data-tool="move" title="Move buildings (drag)">✋ Move</button>
+        <button class="toolbtn danger" data-tool="bulldoze" title="Remove buildings/roads">🚜 Bulldozer</button>
+      </div>
+
+      <div class="toolgroup">
+        <div class="toolgroup-title">Build</div>
+        <div class="gridbtns">
+          <button class="buildbtn" data-build="house">🏠 House</button>
+          <button class="buildbtn" data-build="school">🏫 School</button>
+          <button class="buildbtn" data-build="office">🏢 Office</button>
+          <button class="buildbtn" data-build="factory">🏭 Factory</button>
+          <button class="buildbtn" data-build="hospital">🏥 Hospital</button>
+          <button class="buildbtn" data-build="mall">🛍️ Mall</button>
+          <button class="buildbtn" data-build="park">🌳 Park</button>
+        </div>
+      </div>
+
+      <div class="toolgroup">
+        <div class="toolgroup-title">Views</div>
+        <button id="graphBtn" class="toolbtn glow">🧠 Relationship Graph</button>
+        <button id="modelBtn" class="toolbtn">🧮 Model Editor</button>
+        <button id="buildingBtn" class="toolbtn">📝 Building Details</button>
+        <button id="screenshotBtn" class="toolbtn">📸 Screenshot</button>
+        <button id="resetBtn" class="toolbtn">🔄 Reset to Example City</button>
+      </div>
+
+      <div class="legend">
+        <div class="legend-title">Rules</div>
+        <ul>
+          <li><b>Buildings must touch a road</b> to be Active.</li>
+          <li>Influence strength decays with <b>shortest road distance</b>.</li>
+          <li>🏢 Offices need 🏠 Houses nearby for workers → income.</li>
+          <li>🏭 Factories = current income but hurt happiness if too close.</li>
+          <li>🌳 Parks / 🛍️ Malls boost happiness near houses and help attract workers.</li>
+          <li>🏥 Hospitals boost wellness near houses.</li>
+        </ul>
+      </div>
+
+      <div class="hint">
+        <div><b>Pan:</b> Right-drag / Middle-drag</div>
+        <div><b>Zoom:</b> Mouse wheel</div>
+        <div><b>Rotate:</b> Q / E</div>
+      </div>
+    </aside>
+
+    <main class="stage">
+      <canvas id="gameCanvas"></canvas>
+      <div id="toast" class="toast hidden"></div>
+    </main>
+  </div>
+
+  <!-- Model Editor Modal -->
+  <div id="modelModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-card model-card">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">Model Editor</div>
+          <div class="modal-subtitle">Edit global parameters, base contributions, and pairwise coefficients.</div>
+        </div>
+        <div>
+          <button id="modelReset" class="toolbtn">↺ Reset</button>
+          <button id="modelExport" class="toolbtn">⤓ Export</button>
+          <button id="modelImport" class="toolbtn">⤒ Import</button>
+          <button id="modelClose" class="toolbtn">✖ Close</button>
+        </div>
+      </div>
+      <div class="modal-body model-body">
+        <div class="modelTabs">
+          <button class="toolbtn modelTab active" data-tab="globals">Globals</button>
+          <button class="toolbtn modelTab" data-tab="base">Base</button>
+          <button class="toolbtn modelTab" data-tab="income">Income K</button>
+          <button class="toolbtn modelTab" data-tab="happiness">Happiness K</button>
+          <button class="toolbtn modelTab" data-tab="wellness">Wellness K</button>
+        </div>
+        <div class="modelContent">
+          <div class="modelPanels">
+            <div id="modelGlobals" class="modelPanel" data-panel="globals"></div>
+            <div id="modelBase" class="modelPanel hidden" data-panel="base"></div>
+            <div id="modelIncome" class="modelPanel hidden" data-panel="income"></div>
+            <div id="modelHappiness" class="modelPanel hidden" data-panel="happiness"></div>
+            <div id="modelWellness" class="modelPanel hidden" data-panel="wellness"></div>
+          </div>
+          <aside class="modelHelp">
+            <div class="sideCard">
+              <div class="sideTitle">Instructions</div>
+              <div id="modelInstructions" class="sideText"></div>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <input id="modelImportFile" class="hidden" type="file" accept="application/json" />
+  </div>
+
+  <!-- Building Details Modal -->
+  <div id="buildingModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-card building-card">
+      <div class="modal-header">
+        <div class="buildingHeader">
+          <img id="buildingIcon" class="buildingIcon" alt="" />
+          <div>
+            <div class="modal-title">Building Details</div>
+            <div id="buildingMeta" class="modal-subtitle">Select a building to edit.</div>
+          </div>
+        </div>
+        <div>
+          <button id="buildingClose" class="toolbtn">✖ Close</button>
+        </div>
+      </div>
+      <div class="modal-body building-body">
+        <div class="buildingForm">
+          <label class="fieldLabel">Name</label>
+          <input id="buildingName" class="modelInput" type="text" placeholder="Optional name" />
+
+          <label class="fieldLabel">Description</label>
+          <textarea id="buildingDesc" class="modelInput" rows="4" placeholder="Notes, intent, context"></textarea>
+
+          <div class="tasksHeader">
+            <span class="fieldLabel">Tasks</span>
+            <div class="tasksAdd">
+              <input id="taskText" class="modelInput" type="text" placeholder="New task" />
+              <button id="taskAdd" class="toolbtn">＋ Add</button>
+            </div>
+          </div>
+          <div id="taskList" class="taskList"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Graph Modal -->
+  <div id="graphModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-card" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">Relationship Graph</div>
+          <div class="modal-subtitle">Edges show distance-diminished influence via roads.</div>
+        </div>
+        <div>
+          <button id="graphShotBtn" class="toolbtn">📸 Screenshot</button>
+          <button id="graphDistanceBtn" class="toolbtn">📏 Edge lengths</button>
+          <button id="closeGraph" class="toolbtn">✖ Close</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div id="cy" class="cy"></div>
+        <div id="graphTooltip" class="graphTooltip hidden"></div>
+        <div class="graphSide">
+          <div class="sideCard">
+            <div class="sideTitle">Selected</div>
+            <div id="selectedInfo" class="sideText">Click a node or edge.</div>
+          </div>
+          <div class="sideCard">
+            <div class="sideTitle">How to read it</div>
+            <div class="sideText">
+              <p><b>Nodes</b> are buildings (tasks/activities).</p>
+              <p><b>Edges</b> exist when influence is meaningful (close enough by road).</p>
+              <p>Edge thickness scales with influence weight.</p>
+              <p>Try moving buildings to change distances and rebalance life.</p>
+            </div>
+          </div>
+          <div class="sideCard">
+            <div class="sideTitle">Metrics snapshot</div>
+            <div id="metricSnapshot" class="sideText"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/game.js?v=2026-02-15-renderer-hotfix-1"></script>
+</body>
+</html>
