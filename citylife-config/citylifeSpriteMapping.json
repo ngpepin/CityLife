@@ -12,6 +12,26 @@
       "src": "/assets/sprites_red_water_new_dense.png",
       "cols": 5,
       "rows": 6
+    },
+    "future": {
+      "src": "/assets/sprites_red_water_new_modern.png",
+      "cols": 5,
+      "rows": 6
+    },
+    "new1": {
+      "src": "/assets/sprites_red_water_new_1.png",
+      "cols": 5,
+      "rows": 6
+    },
+    "parks": {
+      "src": "/assets/sprites_red_water_new_parks.png",
+      "cols": 5,
+      "rows": 6
+    },    
+    "water1": {
+      "src": "/assets/sprites_red_water1.png",
+      "cols": 5,
+      "rows": 6
     }
   },
   "categories": {
@@ -90,11 +110,11 @@
       ],
       "sprites": [
         { "sheet": "dense", "row": 3, "col": 1 },
-        { "sheet": "dense", "row": 2, "col": 2 },
         { "sheet": "dense", "row": 2, "col": 3 },
-        { "sheet": "dense", "row": 2, "col": 4 },
-        { "sheet": "modern", "row": 3, "col": 4 },
-        { "sheet": "modern", "row": 4, "col": 0 }
+        { "sheet": "future", "row": 3, "col": 4 },
+        { "sheet": "new1", "row": 1, "col": 0 },
+        { "sheet": "new1", "row": 1, "col": 1 },
+        { "sheet": "water1", "row": 1, "col": 4 }
       ]
     },
     "park": {
