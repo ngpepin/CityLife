@@ -29,7 +29,7 @@
       "rows": 6
     },    
     "water1": {
-    "src": "/assets/sprites_red_water1.png",
+      "src": "/assets/sprites_red_water1.png",
       "cols": 5,
       "rows": 6
     }
@@ -68,9 +68,9 @@
       ],
       "sprites": [
         { "sheet": "modern", "row": 0, "col": 1 },
-        { "sheet": "dense", "row": 2, "col": 0 },
-        { "sheet": "dense", "row": 2, "col": 1 },
-        { "sheet": "dense", "row": 2, "col": 2 },
+        { "sheet": "dense", "row": 2, "col": 0, "trimBottom": 0.20 },
+        { "sheet": "dense", "row": 2, "col": 1, "trimBottom": 0.20 },
+        { "sheet": "dense", "row": 2, "col": 2, "trimBottom": 0.20 },
         { "sheet": "dense", "row": 3, "col": 0 },
         { "sheet": "dense", "row": 3, "col": 1 },
         { "sheet": "dense", "row": 3, "col": 3 }

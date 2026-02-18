@@ -9,7 +9,7 @@
 import { Building, BuildingType } from '@/types/game';
 import { SpritePack, getActiveSpritePack, getSpriteCoords, BUILDING_TO_SPRITE, SPRITE_VERTICAL_OFFSETS, SPRITE_HORIZONTAL_OFFSETS } from '@/lib/renderConfig';
 import { getCityLifeMappedSpriteForBuilding } from '@/lib/citylifeSpriteMapping';
-import { getBuildingSize, requiresWaterAdjacency } from '@/lib/simulation';
+import { getBuildingSize, isSingleTileFootprintHackEnabled, requiresWaterAdjacency } from '@/lib/simulation';
 import { TILE_WIDTH, TILE_HEIGHT } from './types';
 
 // ============================================================================
@@ -23,7 +23,16 @@ export interface SpriteSourceResult {
   /** Type of variant being used */
   variantType: 'normal' | 'construction' | 'abandoned' | 'parks' | 'parksConstruction' | 'dense' | 'modern' | 'farm' | 'shop' | 'station' | 'services' | 'infrastructure' | 'mansion' | 'citylifeMapped';
   /** Variant coordinates if using a variant sheet (row, col) */
-  variant: { row: number; col: number; cols?: number; rows?: number } | null;
+  variant: {
+    row: number;
+    col: number;
+    cols?: number;
+    rows?: number;
+    trimTop?: number;
+    trimBottom?: number;
+    trimLeft?: number;
+    trimRight?: number;
+  } | null;
 }
 
 /** Sprite coordinates within a sheet */
@@ -98,6 +107,10 @@ export function selectSpriteSource(
         col: mappedSprite.col,
         cols: mappedSprite.cols,
         rows: mappedSprite.rows,
+        trimTop: mappedSprite.trimTop,
+        trimBottom: mappedSprite.trimBottom,
+        trimLeft: mappedSprite.trimLeft,
+        trimRight: mappedSprite.trimRight,
       },
     };
   }
@@ -301,19 +314,65 @@ export function calculateSpriteCoords(
   activePack: SpritePack = getActiveSpritePack()
 ): SpriteCoords | null {
   const { variantType, variant } = source;
+  const forceSingleTile = isSingleTileFootprintHackEnabled();
 
   // CityLife JSON-driven category mapping coordinates
   if (variantType === 'citylifeMapped' && variant) {
     const cols = variant.cols || activePack.cols;
     const rows = variant.rows || activePack.rows;
-    const tileWidth = Math.floor(sheetWidth / cols);
-    const tileHeight = Math.floor(sheetHeight / rows);
+    const cellWidth = sheetWidth / cols;
+    const cellHeight = sheetHeight / rows;
+
+    const sx = Math.round(variant.col * cellWidth);
+    let sy = Math.round(variant.row * cellHeight);
+    const nextSx = Math.round((variant.col + 1) * cellWidth);
+    const nextSy = Math.round((variant.row + 1) * cellHeight);
+    let sw = nextSx - sx;
+    let sh = nextSy - sy;
+
+    // sprites4-based sheets (including modern/dense age sheets) have inter-row bleed
+    // and need the same row-dependent Y shift logic used by getSpriteCoords().
+    const usesSprites4StylePacking =
+      source.source.includes('/assets/ages/') || source.source.includes('/assets/sprites_red_water_new');
+    if (usesSprites4StylePacking && variant.row > 0 && variant.row <= 4) {
+      if (variant.row <= 2) {
+        sy += Math.round(cellHeight * 0.1 * variant.row);
+      } else if (variant.row === 3) {
+        sy += Math.round(cellHeight * 0.1);
+      } else if (variant.row === 4) {
+        sy += Math.round(cellHeight * 0.05);
+      }
+    }
+
+    // Trim a thin strip off the top for lower rows where packed sheets often
+    // leak tiny disconnected fragments from the previous row.
+    if (usesSprites4StylePacking && variant.row >= 3) {
+      const topTrim = Math.max(1, Math.round(cellHeight * 0.01));
+      sy += topTrim;
+      sh -= topTrim;
+    }
+
+    // Optional per-sprite trims from citylifeSpriteMapping.json (fractions of cell size).
+    // This is the source-of-truth escape hatch for packed-sheet outliers.
+    const trimTopPx = Math.round(cellHeight * (variant.trimTop ?? 0));
+    const trimBottomPx = Math.round(cellHeight * (variant.trimBottom ?? 0));
+    const trimLeftPx = Math.round(cellWidth * (variant.trimLeft ?? 0));
+    const trimRightPx = Math.round(cellWidth * (variant.trimRight ?? 0));
+
+    sy += trimTopPx;
+    sh -= trimTopPx + trimBottomPx;
+    sw -= trimLeftPx + trimRightPx;
+    const sxAdjusted = sx + trimLeftPx;
+
+    // Defensive clamping
+    sw = Math.max(1, Math.min(sw, sheetWidth - sxAdjusted));
+    sh = Math.max(1, Math.min(sh, sheetHeight - sy));
 
     return {
-      sx: variant.col * tileWidth,
-      sy: variant.row * tileHeight,
-      sw: tileWidth,
-      sh: tileHeight,
+      sx: sxAdjusted,
+      sy,
+      sw,
+      sh,
     };
   }
   
@@ -380,6 +439,10 @@ export function calculateSpriteCoords(
     } else if (buildingType === 'office_low') {
       sourceY += tileHeight * 0.1;
     }
+
+    if (forceSingleTile) {
+      sourceH = Math.min(sourceH, tileHeight);
+    }
     
     return {
       sx: variant.col * tileWidth,
@@ -406,6 +469,10 @@ export function calculateSpriteCoords(
       }
     } else if (buildingType === 'apartment_high') {
       sourceH = tileHeight * 1.05;
+    }
+
+    if (forceSingleTile) {
+      sourceH = Math.min(sourceH, tileHeight);
     }
     
     return {
@@ -483,7 +550,7 @@ export function calculateSpriteCoords(
     const tileHeight = Math.floor(sheetHeight / mansionsRows);
     
     // Extend height to capture full building (1.05 base + 0.15 for bottom)
-    const sourceH = tileHeight * 1.20;
+    const sourceH = forceSingleTile ? tileHeight : tileHeight * 1.20;
 
     return {
       sx: variant.col * tileWidth,
@@ -548,6 +615,10 @@ export function calculateSpriteScale(
   building: Building,
   activePack: SpritePack = getActiveSpritePack()
 ): number {
+  if (isSingleTileFootprintHackEnabled()) {
+    return activePack.globalScale ?? 1;
+  }
+
   const { variantType, variant } = source;
   const buildingSize = getBuildingSize(buildingType);
   const isMultiTile = buildingSize.width > 1 || buildingSize.height > 1;
@@ -665,6 +736,10 @@ export function calculateSpriteOffsets(
   building: Building,
   activePack: SpritePack = getActiveSpritePack()
 ): { vertical: number; horizontal: number } {
+  if (isSingleTileFootprintHackEnabled()) {
+    return { vertical: 0, horizontal: 0 };
+  }
+
   const { variantType, variant } = source;
   const isConstructionPhase = building.constructionProgress !== undefined && 
                               building.constructionProgress >= 40 && 
@@ -833,15 +908,15 @@ export function getSpriteRenderInfo(
   const destHeight = destWidth * aspectRatio;
   
   // Calculate position
-  const buildingSize = getBuildingSize(buildingType);
-  const isMultiTile = buildingSize.width > 1 || buildingSize.height > 1;
+  const footprintForLayout = getBuildingSize(buildingType);
+  const isMultiTile = footprintForLayout.width > 1 || footprintForLayout.height > 1;
   
   let drawPosX = screenX;
   let drawPosY = screenY;
   
   if (isMultiTile) {
-    const frontmostOffsetX = buildingSize.width - 1;
-    const frontmostOffsetY = buildingSize.height - 1;
+    const frontmostOffsetX = footprintForLayout.width - 1;
+    const frontmostOffsetY = footprintForLayout.height - 1;
     const screenOffsetX = (frontmostOffsetX - frontmostOffsetY) * (w / 2);
     const screenOffsetY = (frontmostOffsetX + frontmostOffsetY) * (h / 2);
     drawPosX = screenX + screenOffsetX;
@@ -852,8 +927,10 @@ export function getSpriteRenderInfo(
   const drawX = drawPosX + w / 2 - destWidth / 2 + offsets.horizontal * w;
   
   let verticalPush: number;
-  if (isMultiTile) {
-    const footprintDepth = buildingSize.width + buildingSize.height - 2;
+  if (isSingleTileFootprintHackEnabled()) {
+    verticalPush = 0;
+  } else if (isMultiTile) {
+    const footprintDepth = footprintForLayout.width + footprintForLayout.height - 2;
     verticalPush = footprintDepth * h * 0.25;
   } else {
     verticalPush = destHeight * 0.15;

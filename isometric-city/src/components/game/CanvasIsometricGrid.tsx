@@ -4,8 +4,13 @@ import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 import { useMessages, T, Var, useGT } from 'gt-next';
 import { useGame } from '@/context/GameContext';
 import { TOOL_INFO, Tile, Building, BuildingType, AdjacentCity, Tool } from '@/types/game';
-import { getBuildingSize, requiresWaterAdjacency, getWaterAdjacency } from '@/lib/simulation';
-import { getCityLifeSpriteMappingSheetSources } from '@/lib/citylifeSpriteMapping';
+import {
+  getBuildingSize,
+  getWaterAdjacency,
+  isSingleTileFootprintHackEnabled,
+  requiresWaterAdjacency,
+} from '@/lib/simulation';
+import { getCityLifeMappedSpriteForBuilding, getCityLifeSpriteMappingSheetSources } from '@/lib/citylifeSpriteMapping';
 import { FireIcon, SafetyIcon } from '@/components/ui/Icons';
 import { getSpriteCoords, BUILDING_TO_SPRITE, SPRITE_VERTICAL_OFFSETS, SPRITE_HORIZONTAL_OFFSETS, getActiveSpritePack } from '@/lib/renderConfig';
 import { selectSpriteSource, calculateSpriteCoords, calculateSpriteScale, calculateSpriteOffsets, getSpriteRenderInfo } from '@/components/game/buildingSprite';
@@ -259,6 +264,9 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
 
   // PERF: Cache background gradient - only recreate when canvas height changes
   const bgGradientCacheRef = useRef<{ gradient: CanvasGradient | null; height: number }>({ gradient: null, height: 0 });
+  // Cache per-sprite anchor fractions (centerX, bottomY) for CityLife mapped assets.
+  const citylifeSpriteAnchorCacheRef = useRef<Map<string, { centerX: number; bottomY: number; baseWidth: number }>>(new Map());
+  const citylifeSpriteAnchorCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // PERF: Render queue arrays cached across frames to reduce GC pressure
   // These are cleared at the start of each render frame with .length = 0
@@ -304,6 +312,133 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
   const supportsDragPlace = selectedTool !== 'select';
 
   const PAN_DRAG_THRESHOLD = 6;
+
+  const getCitylifeSpriteAnchorFractions = useCallback(
+    (
+      spriteSheet: CanvasImageSource,
+      coords: { sx: number; sy: number; sw: number; sh: number },
+      cacheKey: string,
+    ): { centerX: number; bottomY: number; baseWidth: number } => {
+      const cached = citylifeSpriteAnchorCacheRef.current.get(cacheKey);
+      if (cached) return cached;
+
+      let computed = { centerX: 0.5, bottomY: 1, baseWidth: 1 };
+
+      try {
+        const sw = Math.max(1, Math.round(coords.sw));
+        const sh = Math.max(1, Math.round(coords.sh));
+
+        if (!citylifeSpriteAnchorCanvasRef.current) {
+          citylifeSpriteAnchorCanvasRef.current = document.createElement('canvas');
+        }
+        const scanCanvas = citylifeSpriteAnchorCanvasRef.current;
+        scanCanvas.width = sw;
+        scanCanvas.height = sh;
+
+        const scanCtx = scanCanvas.getContext('2d', { willReadFrequently: true });
+        if (!scanCtx) {
+          citylifeSpriteAnchorCacheRef.current.set(cacheKey, computed);
+          return computed;
+        }
+
+        scanCtx.clearRect(0, 0, sw, sh);
+        scanCtx.drawImage(spriteSheet, coords.sx, coords.sy, coords.sw, coords.sh, 0, 0, sw, sh);
+
+        const imageData = scanCtx.getImageData(0, 0, sw, sh).data;
+        const alphaThreshold = 48;
+        const redKeyMin = 200;
+        const redKeyGreenMax = 100;
+        const redKeyBlueMax = 100;
+
+        // Count opaque pixels by row first so we can ignore single-pixel noise.
+        const rowOpaqueCounts = new Uint16Array(sh);
+        const isOpaque = (offset: number): boolean => {
+          const r = imageData[offset];
+          const g = imageData[offset + 1];
+          const b = imageData[offset + 2];
+          const a = imageData[offset + 3];
+          if (a <= alphaThreshold) return false;
+          // Treat key-red background as transparent (works even if filtered image is unavailable).
+          if (r >= redKeyMin && g <= redKeyGreenMax && b <= redKeyBlueMax) return false;
+          return true;
+        };
+
+        for (let py = 0; py < sh; py += 1) {
+          let offsetPx = py * sw * 4;
+          let rowCount = 0;
+          for (let px = 0; px < sw; px += 1) {
+            if (isOpaque(offsetPx)) rowCount += 1;
+            offsetPx += 4;
+          }
+          rowOpaqueCounts[py] = rowCount;
+        }
+
+        const minRowPixels = Math.max(3, Math.round(sw * 0.01));
+
+        let bottomY = -1;
+        for (let py = sh - 1; py >= 0; py -= 1) {
+          if (rowOpaqueCounts[py] >= minRowPixels) {
+            bottomY = py;
+            break;
+          }
+        }
+
+        let minX = sw;
+        let maxX = -1;
+        let maxY = -1;
+        for (let py = 0; py < sh; py += 1) {
+          let offsetPx = py * sw * 4;
+          for (let px = 0; px < sw; px += 1) {
+            if (isOpaque(offsetPx)) {
+              if (px < minX) minX = px;
+              if (px > maxX) maxX = px;
+              if (py > maxY) maxY = py;
+            }
+            offsetPx += 4;
+          }
+        }
+
+        if (bottomY >= 0) {
+          // Compute horizontal anchor from a bottom band (actual ground contact),
+          // not full sprite bounds, which can include overhangs/towers.
+          const bandHeight = Math.max(4, Math.round(sh * 0.06));
+          const bandStartY = Math.max(0, bottomY - bandHeight + 1);
+          let baseMinX = sw;
+          let baseMaxX = -1;
+
+          for (let py = bandStartY; py <= bottomY; py += 1) {
+            if (rowOpaqueCounts[py] < minRowPixels) continue;
+            let offsetPx = py * sw * 4;
+            for (let px = 0; px < sw; px += 1) {
+              if (isOpaque(offsetPx)) {
+                if (px < baseMinX) baseMinX = px;
+                if (px > baseMaxX) baseMaxX = px;
+              }
+              offsetPx += 4;
+            }
+          }
+
+          const effectiveMinX = baseMaxX >= baseMinX ? baseMinX : minX;
+          const effectiveMaxX = baseMaxX >= baseMinX ? baseMaxX : maxX;
+          const effectiveBottomY = maxY >= 0 ? bottomY : maxY;
+
+          if (effectiveMaxX >= effectiveMinX && effectiveBottomY >= 0) {
+            computed = {
+              centerX: ((effectiveMinX + effectiveMaxX + 1) * 0.5) / sw,
+              bottomY: (effectiveBottomY + 1) / sh,
+              baseWidth: (effectiveMaxX - effectiveMinX + 1) / sw,
+            };
+          }
+        }
+      } catch {
+        // Keep default anchor if pixel scanning fails.
+      }
+
+      citylifeSpriteAnchorCacheRef.current.set(cacheKey, computed);
+      return computed;
+    },
+    [],
+  );
 
   // Use extracted building helpers (with pre-computed tile metadata for O(1) lookups)
   const { isPartOfMultiTileBuilding, findBuildingOrigin, isPartOfParkBuilding, getTileMetadata } = useBuildingHelpers(grid, gridSize);
@@ -1357,7 +1492,9 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
       
       // Check if this building type has a sprite in the tile renderer, parks sheet, or stations sheet
       const activePack = getActiveSpritePack();
+      const mappedSprite = getCityLifeMappedSpriteForBuilding(buildingType, tile.x, tile.y, activePack);
       const hasTileSprite = BUILDING_TO_SPRITE[buildingType] || 
+        mappedSprite ||
         (activePack.parksBuildings && activePack.parksBuildings[buildingType]) ||
         (activePack.stationsVariants && activePack.stationsVariants[buildingType]);
       
@@ -1550,7 +1687,8 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
           
           // Use extracted utilities to determine sprite source, coords, scale, and offsets
           const spriteSourceInfo = selectSpriteSource(buildingType, tile.building, tile.x, tile.y, activePack);
-          const filteredSpriteSheet = getCachedImage(spriteSourceInfo.source, true) || getCachedImage(spriteSourceInfo.source);
+          const filteredOnlySpriteSheet = getCachedImage(spriteSourceInfo.source, true);
+          const filteredSpriteSheet = filteredOnlySpriteSheet || getCachedImage(spriteSourceInfo.source);
           
           if (filteredSpriteSheet) {
             const sheetWidth = filteredSpriteSheet.naturalWidth || filteredSpriteSheet.width;
@@ -1565,6 +1703,7 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
               const offsets = calculateSpriteOffsets(buildingType, spriteSourceInfo, tile.building, activePack);
               
               // Get building size for positioning
+              const forceSingleTile = isSingleTileFootprintHackEnabled();
               const buildingSize = getBuildingSize(buildingType);
               const isMultiTile = buildingSize.width > 1 || buildingSize.height > 1;
               
@@ -1573,24 +1712,58 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
               let drawPosY = y;
               
               if (isMultiTile) {
-                const frontmostOffsetX = buildingSize.width - 1;
-                const frontmostOffsetY = buildingSize.height - 1;
-                const screenOffsetX = (frontmostOffsetX - frontmostOffsetY) * (w / 2);
-                const screenOffsetY = (frontmostOffsetX + frontmostOffsetY) * (h / 2);
-                drawPosX = x + screenOffsetX;
-                drawPosY = y + screenOffsetY;
+                if (forceSingleTile) {
+                  // In forced single-tile mode, keep anchor on origin tile and
+                  // apply depth compensation only once in verticalPush.
+                  drawPosY = y;
+                } else {
+                  const frontmostOffsetX = buildingSize.width - 1;
+                  const frontmostOffsetY = buildingSize.height - 1;
+                  const screenOffsetX = (frontmostOffsetX - frontmostOffsetY) * (w / 2);
+                  const screenOffsetY = (frontmostOffsetX + frontmostOffsetY) * (h / 2);
+                  drawPosX = x + screenOffsetX;
+                  drawPosY = y + screenOffsetY;
+                }
               }
               
+              // Precompute mapped sprite anchor (if any).
+              let mappedAnchor: { centerX: number; bottomY: number; baseWidth: number } | null = null;
+              const anchorScanSheet = filteredOnlySpriteSheet || filteredSpriteSheet;
+              if (spriteSourceInfo.variantType === 'citylifeMapped' && anchorScanSheet) {
+                const anchorKey = [
+                  spriteSourceInfo.source,
+                  coords.sx,
+                  coords.sy,
+                  coords.sw,
+                  coords.sh,
+                ].join(':');
+                mappedAnchor = getCitylifeSpriteAnchorFractions(anchorScanSheet, coords, anchorKey);
+              }
+
               // Calculate destination size
-              const destWidth = w * 1.2 * scaleMultiplier;
+              let destWidth = w * 1.2 * scaleMultiplier;
               const aspectRatio = coords.sh / coords.sw;
-              const destHeight = destWidth * aspectRatio;
+              let destHeight = destWidth * aspectRatio;
+
+              // In forced single-tile mode, normalize mapped sprites so their
+              // detected ground-contact width fits one tile.
+              if (forceSingleTile && mappedAnchor) {
+                const currentBaseWidthPx = destWidth * Math.max(0.01, mappedAnchor.baseWidth);
+                const targetBaseWidthPx = w * 0.92;
+                const fitScale = Math.min(1, targetBaseWidthPx / currentBaseWidthPx);
+                if (fitScale < 1) {
+                  destWidth *= fitScale;
+                  destHeight *= fitScale;
+                }
+              }
               
               // Calculate final position with offsets
-              const drawX = drawPosX + w / 2 - destWidth / 2 + offsets.horizontal * w;
+              let drawX = drawPosX + w / 2 - destWidth / 2 + offsets.horizontal * w;
               
               let verticalPush: number;
-              if (isMultiTile) {
+              if (forceSingleTile) {
+                verticalPush = 0;
+              } else if (isMultiTile) {
                 const footprintDepth = buildingSize.width + buildingSize.height - 2;
                 verticalPush = footprintDepth * h * 0.25;
               } else {
@@ -1598,7 +1771,7 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
               }
               verticalPush += offsets.vertical * h;
               
-              const drawY = drawPosY + h - destHeight + verticalPush;
+              let drawY = drawPosY + h - destHeight + verticalPush;
               
               // Determine flip based on road adjacency or random
               const isWaterfrontAsset = requiresWaterAdjacency(buildingType);
@@ -1616,6 +1789,15 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
               
               const baseFlipped = tile.building.flipped === true;
               const isFlipped = baseFlipped !== shouldRoadMirror;
+
+              // Auto-anchor mapped sprites to their actual opaque bounds so
+              // outlier assets stay centered on the occupied tile.
+              // For mirrored sprites, the anchor center must be mirrored too.
+              if (mappedAnchor) {
+                const effectiveCenterX = isFlipped ? (1 - mappedAnchor.centerX) : mappedAnchor.centerX;
+                drawX += (0.5 - effectiveCenterX) * destWidth;
+                drawY += (1 - mappedAnchor.bottomY) * destHeight;
+              }
               
               if (isFlipped) {
                 ctx.save();

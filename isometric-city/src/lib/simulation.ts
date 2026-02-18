@@ -2528,8 +2528,26 @@ const BUILDING_SIZES: Partial<Record<BuildingType, { width: number; height: numb
   rail_station: { width: 2, height: 2 },
 };
 
+// CityLife hack: force all buildings to occupy a single tile footprint.
+// Set to false to restore per-building footprint sizes from BUILDING_SIZES.
+const FORCE_SINGLE_TILE_FOOTPRINTS = true;
+
+export function isSingleTileFootprintHackEnabled(): boolean {
+  return FORCE_SINGLE_TILE_FOOTPRINTS;
+}
+
 // Get the size of a building (how many tiles it spans)
 export function getBuildingSize(buildingType: BuildingType): { width: number; height: number } {
+  if (FORCE_SINGLE_TILE_FOOTPRINTS) {
+    return { width: 1, height: 1 };
+  }
+  return BUILDING_SIZES[buildingType] || { width: 1, height: 1 };
+}
+
+// Get the canonical footprint size for rendering/visual alignment.
+// This ignores FORCE_SINGLE_TILE_FOOTPRINTS so visual anchoring can still account
+// for assets authored as larger footprints.
+export function getNominalBuildingSize(buildingType: BuildingType): { width: number; height: number } {
   return BUILDING_SIZES[buildingType] || { width: 1, height: 1 };
 }
 

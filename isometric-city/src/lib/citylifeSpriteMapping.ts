@@ -12,6 +12,11 @@ interface CategorySpriteOption {
   sheet: string;
   row: number;
   col: number;
+  // Optional trims are fractions of one sprite cell (0..1), applied before render.
+  trimTop?: number;
+  trimBottom?: number;
+  trimLeft?: number;
+  trimRight?: number;
 }
 
 interface CategorySpriteConfig {
@@ -33,6 +38,10 @@ export interface CityLifeMappedSprite {
   rows: number;
   row: number;
   col: number;
+  trimTop?: number;
+  trimBottom?: number;
+  trimLeft?: number;
+  trimRight?: number;
   category: string;
 }
 
@@ -108,6 +117,10 @@ export function getCityLifeMappedSpriteForBuilding(
     rows: sheet.rows,
     row: option.row,
     col: option.col,
+    trimTop: option.trimTop,
+    trimBottom: option.trimBottom,
+    trimLeft: option.trimLeft,
+    trimRight: option.trimRight,
     category,
   };
 }
