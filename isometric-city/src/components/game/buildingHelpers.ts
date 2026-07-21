@@ -38,7 +38,7 @@ const ALL_PARK_TYPES = new Set<BuildingType>([
   'mountain_lodge', 'mountain_trailhead'
 ]);
 
-export function useBuildingHelpers(grid: Tile[][], gridSize: number) {
+export function useBuildingHelpers(grid: Tile[][], gridSize: number, cityLifeMode = false) {
   // Pre-compute all tile metadata once when grid changes
   // This converts O(n) per-tile lookups during render to O(1) map lookups
   // PERF: Store gridSize for numeric key calculation
@@ -72,7 +72,10 @@ export function useBuildingHelpers(grid: Tile[][], gridSize: number) {
             
             if (originX >= 0 && originX < gridSize && originY >= 0 && originY < gridSize) {
               const originTile = grid[originY][originX];
-              const buildingSize = getBuildingSize(originTile.building.type);
+              const buildingSize = getBuildingSize(
+                originTile.building.type,
+                cityLifeMode
+              );
               
               if (buildingSize.width > 1 || buildingSize.height > 1) {
                 if (x >= originX && x < originX + buildingSize.width &&
@@ -96,7 +99,10 @@ export function useBuildingHelpers(grid: Tile[][], gridSize: number) {
               const originTile = grid[originY][originX];
               
               if (PARK_BUILDINGS_SET.has(originTile.building.type)) {
-                const buildingSize = getBuildingSize(originTile.building.type);
+                const buildingSize = getBuildingSize(
+                  originTile.building.type,
+                  cityLifeMode
+                );
                 if (x >= originX && x < originX + buildingSize.width &&
                     y >= originY && y < originY + buildingSize.height) {
                   isParkBuilding = true;
@@ -173,7 +179,7 @@ export function useBuildingHelpers(grid: Tile[][], gridSize: number) {
         // Only compute for actual building tiles (not 'empty' parts of multi-tile buildings)
         // The render loop will use the origin tile's metadata
         if (isDirectBuilding) {
-          const buildingSize = getBuildingSize(buildingType);
+          const buildingSize = getBuildingSize(buildingType, cityLifeMode);
           const width = buildingSize.width;
           const height = buildingSize.height;
           
@@ -253,7 +259,7 @@ export function useBuildingHelpers(grid: Tile[][], gridSize: number) {
     }
     
     return map;
-  }, [grid, gridSize]);
+  }, [cityLifeMode, grid, gridSize]);
   
   // O(1) lookup functions that use the pre-computed map
   // PERF: Use numeric key calculation (gridY * gridSize + gridX)
@@ -282,7 +288,7 @@ export function useBuildingHelpers(grid: Tile[][], gridSize: number) {
         tile.building.type !== 'road' && 
         tile.building.type !== 'rail' && 
         tile.building.type !== 'tree') {
-      const size = getBuildingSize(tile.building.type);
+      const size = getBuildingSize(tile.building.type, cityLifeMode);
       if (size.width > 1 || size.height > 1) {
         return { originX: gridX, originY: gridY, buildingType: tile.building.type };
       }
@@ -303,7 +309,10 @@ export function useBuildingHelpers(grid: Tile[][], gridSize: number) {
                 originTile.building.type !== 'water' &&
                 originTile.building.type !== 'road' &&
                 originTile.building.type !== 'tree') {
-              const size = getBuildingSize(originTile.building.type);
+              const size = getBuildingSize(
+                originTile.building.type,
+                cityLifeMode
+              );
               
               if (size.width > 1 || size.height > 1) {
                 if (gridX >= originX && gridX < originX + size.width &&
@@ -318,7 +327,7 @@ export function useBuildingHelpers(grid: Tile[][], gridSize: number) {
     }
     
     return null;
-  }, [grid, gridSize]);
+  }, [cityLifeMode, grid, gridSize]);
 
   return {
     isPartOfMultiTileBuilding,

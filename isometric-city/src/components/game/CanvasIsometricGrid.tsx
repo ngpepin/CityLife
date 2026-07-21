@@ -7,13 +7,12 @@ import { TOOL_INFO, Tile, Building, BuildingType, AdjacentCity, Tool } from '@/t
 import {
   getBuildingSize,
   getWaterAdjacency,
-  isSingleTileFootprintHackEnabled,
   requiresWaterAdjacency,
 } from '@/lib/simulation';
 import { getCityLifeMappedSpriteForBuilding, getCityLifeSpriteMappingSheetSources } from '@/lib/citylifeSpriteMapping';
 import { FireIcon, SafetyIcon } from '@/components/ui/Icons';
 import { getSpriteCoords, BUILDING_TO_SPRITE, SPRITE_VERTICAL_OFFSETS, SPRITE_HORIZONTAL_OFFSETS, getActiveSpritePack } from '@/lib/renderConfig';
-import { selectSpriteSource, calculateSpriteCoords, calculateSpriteScale, calculateSpriteOffsets, getSpriteRenderInfo } from '@/components/game/buildingSprite';
+import { selectSpriteSource, calculateSpriteCoords, calculateSpriteScale, calculateSpriteOffsets } from '@/components/game/buildingSprite';
 
 // Import shadcn components
 import { Button } from '@/components/ui/button';
@@ -131,8 +130,9 @@ export interface CanvasIsometricGridProps {
 
 // Canvas-based Isometric Grid - HIGH PERFORMANCE
 export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile, isMobile = false, navigationTarget, onNavigationComplete, onViewportChange, onBargeDelivery }: CanvasIsometricGridProps) {
-  const { state, latestStateRef, placeAtTile, finishTrackDrag, connectToCity, checkAndDiscoverCities, currentSpritePack, visualHour } = useGame();
+  const { gameMode, state, latestStateRef, placeAtTile, finishTrackDrag, connectToCity, checkAndDiscoverCities, currentSpritePack, visualHour } = useGame();
   const { grid, gridSize, selectedTool, speed, adjacentCities, waterBodies, gameVersion } = state;
+  const isCityLifeMode = gameMode === 'citylife';
   
   // PERF: Use latestStateRef for real-time grid access in animation loops
   // This avoids waiting for React state sync which is throttled for performance
@@ -147,7 +147,10 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
   const containerRef = useRef<HTMLDivElement>(null);
   const renderPendingRef = useRef<number | null>(null); // PERF: Track pending render frame
   const lastMainRenderTimeRef = useRef<number>(0); // PERF: Throttle main renders at high speed
-  const [offset, setOffset] = useState({ x: isMobile ? 200 : 620, y: isMobile ? 100 : 160 });
+  const [offset, setOffset] = useState({
+    x: isMobile ? 200 : 620,
+    y: isMobile ? 100 : isCityLifeMode ? 50 : 160,
+  });
   const [isDragging, setIsDragging] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const [isWheelZooming, setIsWheelZooming] = useState(false); // State to trigger re-render when wheel zooming stops
@@ -441,7 +444,11 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
   );
 
   // Use extracted building helpers (with pre-computed tile metadata for O(1) lookups)
-  const { isPartOfMultiTileBuilding, findBuildingOrigin, isPartOfParkBuilding, getTileMetadata } = useBuildingHelpers(grid, gridSize);
+  const { isPartOfMultiTileBuilding, findBuildingOrigin, isPartOfParkBuilding, getTileMetadata } = useBuildingHelpers(
+    grid,
+    gridSize,
+    isCityLifeMode,
+  );
 
   // Use extracted vehicle systems
   const vehicleSystemRefs: VehicleSystemRefs = {
@@ -1047,10 +1054,12 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
       if (currentSpritePack.mansionsSrc) {
         loadSpriteImage(currentSpritePack.mansionsSrc, true).catch(console.error);
       }
-      // Load any extra JSON-mapped CityLife sprite sheets
-      const cityLifeMappedSheets = getCityLifeSpriteMappingSheetSources(currentSpritePack);
-      for (const src of cityLifeMappedSheets) {
-        loadSpriteImage(src, true).catch(console.error);
+      // Load CityLife-only mapped sheets only while rendering CityLife.
+      if (isCityLifeMode) {
+        const cityLifeMappedSheets = getCityLifeSpriteMappingSheetSources(currentSpritePack);
+        for (const src of cityLifeMappedSheets) {
+          loadSpriteImage(src, true).catch(console.error);
+        }
       }
       // Load airplane sprite sheet (always loaded, not dependent on sprite pack)
       loadSpriteImage(AIRPLANE_SPRITE_SRC, false).catch(console.error);
@@ -1059,11 +1068,13 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
     // Load secondary sheets after 50ms to prioritize first paint
     const timer = setTimeout(loadSecondarySheets, 50);
     return () => clearTimeout(timer);
-  }, [currentSpritePack]);
+  }, [currentSpritePack, isCityLifeMode]);
   
   // Building helper functions moved to buildingHelpers.ts
   
-  // Update canvas size on resize with high-DPI support
+  // Update canvas size with high-DPI support. The container can resize without
+  // a window resize (for example when CityLife's mobile tool drawer opens), so
+  // observe the element as well as the viewport.
   useEffect(() => {
     const updateSize = () => {
       if (containerRef.current && canvasRef.current) {
@@ -1095,15 +1106,23 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
         }
         
         // Set actual size in memory (scaled for DPI)
-        setCanvasSize({
-          width: Math.round(rect.width * dpr),
-          height: Math.round(rect.height * dpr),
-        });
+        const width = Math.round(rect.width * dpr);
+        const height = Math.round(rect.height * dpr);
+        setCanvasSize((current) =>
+          current.width === width && current.height === height ? current : { width, height }
+        );
       }
     };
     updateSize();
+    const resizeObserver = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(updateSize);
+    if (containerRef.current) resizeObserver?.observe(containerRef.current);
     window.addEventListener('resize', updateSize);
-    return () => window.removeEventListener('resize', updateSize);
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', updateSize);
+    };
   }, []);
   
   // Main render function - PERF: Uses requestAnimationFrame throttling to batch multiple state updates
@@ -1478,7 +1497,7 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
       
       // Draw water tiles underneath marina/pier buildings
       if (buildingType === 'marina_docks_small' || buildingType === 'pier_large') {
-        const buildingSize = getBuildingSize(buildingType);
+        const buildingSize = getBuildingSize(buildingType, isCityLifeMode);
         // Draw water tiles for each tile in the building's footprint
         for (let dx = 0; dx < buildingSize.width; dx++) {
           for (let dy = 0; dy < buildingSize.height; dy++) {
@@ -1492,7 +1511,9 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
       
       // Check if this building type has a sprite in the tile renderer, parks sheet, or stations sheet
       const activePack = getActiveSpritePack();
-      const mappedSprite = getCityLifeMappedSpriteForBuilding(buildingType, tile.x, tile.y, activePack);
+      const mappedSprite = isCityLifeMode && tile.building.cityLife !== undefined
+        ? getCityLifeMappedSpriteForBuilding(buildingType, tile.x, tile.y, activePack)
+        : null;
       const hasTileSprite = BUILDING_TO_SPRITE[buildingType] || 
         mappedSprite ||
         (activePack.parksBuildings && activePack.parksBuildings[buildingType]) ||
@@ -1666,7 +1687,7 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
           // If in foundation phase, draw the foundation plot and skip sprite rendering
           if (isFoundationPhase) {
             // Get building size to handle multi-tile foundations
-            const buildingSize = getBuildingSize(buildingType);
+            const buildingSize = getBuildingSize(buildingType, isCityLifeMode);
             
             // For multi-tile buildings, we only draw the foundation from the origin tile
             if (buildingSize.width > 1 || buildingSize.height > 1) {
@@ -1686,7 +1707,14 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
           }
           
           // Use extracted utilities to determine sprite source, coords, scale, and offsets
-          const spriteSourceInfo = selectSpriteSource(buildingType, tile.building, tile.x, tile.y, activePack);
+          const spriteSourceInfo = selectSpriteSource(
+            buildingType,
+            tile.building,
+            tile.x,
+            tile.y,
+            activePack,
+            isCityLifeMode,
+          );
           const filteredOnlySpriteSheet = getCachedImage(spriteSourceInfo.source, true);
           const filteredSpriteSheet = filteredOnlySpriteSheet || getCachedImage(spriteSourceInfo.source);
           
@@ -1695,16 +1723,35 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
             const sheetHeight = filteredSpriteSheet.naturalHeight || filteredSpriteSheet.height;
             
             // Calculate sprite coordinates using extracted utility
-            const coords = calculateSpriteCoords(buildingType, spriteSourceInfo, sheetWidth, sheetHeight, activePack);
+            const forceSingleTile = isCityLifeMode;
+            const coords = calculateSpriteCoords(
+              buildingType,
+              spriteSourceInfo,
+              sheetWidth,
+              sheetHeight,
+              activePack,
+              forceSingleTile
+            );
             
             if (coords) {
               // Calculate scale and offsets using extracted utilities
-              const scaleMultiplier = calculateSpriteScale(buildingType, spriteSourceInfo, tile.building, activePack);
-              const offsets = calculateSpriteOffsets(buildingType, spriteSourceInfo, tile.building, activePack);
+              const scaleMultiplier = calculateSpriteScale(
+                buildingType,
+                spriteSourceInfo,
+                tile.building,
+                activePack,
+                isCityLifeMode,
+              );
+              const offsets = calculateSpriteOffsets(
+                buildingType,
+                spriteSourceInfo,
+                tile.building,
+                activePack,
+                isCityLifeMode,
+              );
               
               // Get building size for positioning
-              const forceSingleTile = isSingleTileFootprintHackEnabled();
-              const buildingSize = getBuildingSize(buildingType);
+              const buildingSize = getBuildingSize(buildingType, forceSingleTile);
               const isMultiTile = buildingSize.width > 1 || buildingSize.height > 1;
               
               // Calculate draw position for multi-tile buildings
@@ -1900,7 +1947,7 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
         
         // Separate water tiles into their own queue (drawn after base tiles, below other buildings)
         if (tile.building.type === 'water') {
-          const size = getBuildingSize(tile.building.type);
+          const size = getBuildingSize(tile.building.type, isCityLifeMode);
           const depth = x + y + size.width + size.height - 2;
           waterQueue.push({ screenX, screenY, tile, depth });
         }
@@ -1928,7 +1975,7 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
         else {
           const isBuilding = tile.building.type !== 'grass' && tile.building.type !== 'empty';
           if (isBuilding) {
-            const size = getBuildingSize(tile.building.type);
+            const size = getBuildingSize(tile.building.type, isCityLifeMode);
             const depth = x + y + size.width + size.height - 2;
             buildingQueue.push({ screenX, screenY, tile, depth });
           }
@@ -2356,7 +2403,7 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
       }
     };
   // PERF: hoveredTile and selectedTile removed from deps - now rendered on separate hover canvas layer
-  }, [grid, gridSize, offset, zoom, overlayMode, imagesLoaded, imageLoadVersion, canvasSize, dragStartTile, dragEndTile, state.services, currentSpritePack, waterBodies, getTileMetadata, showsDragGrid, isMobile]);
+  }, [grid, gridSize, offset, zoom, overlayMode, imagesLoaded, imageLoadVersion, canvasSize, dragStartTile, dragEndTile, state.services, currentSpritePack, waterBodies, getTileMetadata, getCitylifeSpriteAnchorFractions, showsDragGrid, isCityLifeMode, isMobile]);
   
   // PERF: Lightweight hover/selection overlay - renders ONLY tile highlights
   // This runs frequently (on mouse move) but is extremely fast since it only draws simple shapes
@@ -2408,7 +2455,7 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
       if (isBuildingTool) {
         // Get building size and draw preview for all tiles in footprint
         const buildingType = selectedTool as BuildingType;
-        const buildingSize = getBuildingSize(buildingType);
+        const buildingSize = getBuildingSize(buildingType, isCityLifeMode);
         
         // Draw highlight for each tile in the building footprint
         for (let dx = 0; dx < buildingSize.width; dx++) {
@@ -2432,7 +2479,10 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
     if (selectedTile && selectedTile.x >= 0 && selectedTile.x < gridSize && selectedTile.y >= 0 && selectedTile.y < gridSize) {
       const selectedOrigin = grid[selectedTile.y]?.[selectedTile.x];
       if (selectedOrigin) {
-        const selectedSize = getBuildingSize(selectedOrigin.building.type);
+        const selectedSize = getBuildingSize(
+          selectedOrigin.building.type,
+          isCityLifeMode
+        );
         // Draw highlight for each tile in the building footprint
         for (let dx = 0; dx < selectedSize.width; dx++) {
           for (let dy = 0; dy < selectedSize.height; dy++) {
@@ -2563,7 +2613,7 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
     }
     
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-  }, [hoveredTile, selectedTile, selectedTool, offset, zoom, gridSize, grid, isDragging, dragStartTile, dragEndTile]);
+  }, [hoveredTile, selectedTile, selectedTool, offset, zoom, gridSize, grid, isDragging, dragStartTile, dragEndTile, isCityLifeMode]);
   
   // Animate decorative car traffic AND emergency vehicles on top of the base canvas
   useEffect(() => {
@@ -3277,7 +3327,7 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
         style={{ mixBlendMode: 'multiply' }}
       />
       
-      {selectedTile && selectedTool === 'select' && !isMobile && (
+      {!isCityLifeMode && selectedTile && selectedTool === 'select' && !isMobile && (
         <TileInfoPanel
           tile={grid[selectedTile.y][selectedTile.x]}
           services={state.services}
@@ -3286,7 +3336,7 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
       )}
       
       {/* City Connection Dialog */}
-      {cityConnectionDialog && (() => {
+      {!isCityLifeMode && cityConnectionDialog && (() => {
         // Find a discovered but not connected city in this direction
         const city = adjacentCities.find(c => c.direction === cityConnectionDialog.direction && c.discovered && !c.connected);
         if (!city) return null;
@@ -3363,7 +3413,7 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
         let isWaterfrontPlacementInvalid = false;
         
         if (isWaterfrontTool && hoveredTile) {
-          const size = getBuildingSize(buildingType);
+          const size = getBuildingSize(buildingType, isCityLifeMode);
           const waterCheck = getWaterAdjacency(grid, hoveredTile.x, hoveredTile.y, size.width, size.height, gridSize);
           isWaterfrontPlacementInvalid = !waterCheck.hasWater;
         }
@@ -3385,7 +3435,7 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
                   return (
                     <>
                       {gt('{toolName} - {width}x{height} area', { toolName, width: areaWidth, height: areaHeight })}
-                      {TOOL_INFO[selectedTool].cost > 0 && ` - $${totalCost}`}
+                      {!isCityLifeMode && TOOL_INFO[selectedTool].cost > 0 && ` - $${totalCost}`}
                     </>
                   );
                 })()}
@@ -3397,7 +3447,7 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
             ) : (
               <>
                 {gt('{toolName} at ({x}, {y})', { toolName, x: hoveredTile.x, y: hoveredTile.y })}
-                {TOOL_INFO[selectedTool].cost > 0 && ` - $${TOOL_INFO[selectedTool].cost}`}
+                {!isCityLifeMode && TOOL_INFO[selectedTool].cost > 0 && ` - $${TOOL_INFO[selectedTool].cost}`}
                 {showsDragGrid && gt(' - Drag to zone area')}
                 {supportsDragPlace && !showsDragGrid && gt(' - Drag to place')}
               </>

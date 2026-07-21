@@ -1,5 +1,26 @@
-import { BuildingType, GameState, Tile, Tool } from '@/types/game';
-import { createInitialGameState, getBuildingSize, placeBuilding } from '@/lib/simulation';
+import {
+  BuildingType,
+  CityLifeNodeMetadata,
+  CityLifeNodePriority,
+  CityLifeNodeStatus,
+  CityLifeTask,
+  GameState,
+  Tile,
+  Tool,
+} from '@/types/game';
+import {
+  bulldozeTile,
+  createInitialGameState,
+  getBuildingSize,
+  placeBuilding,
+} from '@/lib/simulation';
+
+export type {
+  CityLifeNodeMetadata,
+  CityLifeNodePriority,
+  CityLifeNodeStatus,
+  CityLifeTask,
+} from '@/types/game';
 
 export type CityLifeCategory =
   | 'housing'
@@ -9,15 +30,15 @@ export type CityLifeCategory =
   | 'leisure'
   | 'development';
 
-type MetricVector = {
+export type MetricVector = {
   income: number;
   happiness: number;
   wellness: number;
 };
 
-type Coord = { x: number; y: number };
+export type CityLifeCoord = { x: number; y: number };
 
-type NodeAttribution = {
+export type NodeAttribution = {
   id: string;
   name: string;
   value: number;
@@ -31,7 +52,10 @@ export interface CityLifeNode {
   x: number;
   y: number;
   active: boolean;
-  adjacentRoads: Coord[];
+  adjacentRoads: CityLifeCoord[];
+  metadata: CityLifeNodeMetadata;
+  impact: MetricVector;
+  relationshipCount: number;
 }
 
 export interface CityLifeEdge {
@@ -63,6 +87,9 @@ export interface CityLifeTool {
 }
 
 export const CITYLIFE_SPRITE_PACK_ID = 'sprites4-ages-modern';
+export const CITYLIFE_STORAGE_KEY = 'citylife-workspace-v1';
+export const CITYLIFE_EXPORT_FORMAT = 'citylife-workspace';
+export const CITYLIFE_EXPORT_VERSION = 1;
 
 const D_MAX = 18;
 const LAMBDA = 6;
@@ -84,7 +111,7 @@ const BASE_EFFECTS: Record<CityLifeCategory, MetricVector> = {
   development: { income: 1.5, happiness: 1.0, wellness: 1.2 },
 };
 
-const CATEGORY_NAMES: Record<CityLifeCategory, string> = {
+export const CITYLIFE_CATEGORY_NAMES: Record<CityLifeCategory, string> = {
   housing: 'Housing',
   work_income: 'Work (Current)',
   work_capacity: 'Work (Capacity)',
@@ -145,6 +172,177 @@ const CATEGORY_BY_TYPE: Partial<Record<BuildingType, CityLifeCategory>> = {
   university: 'development',
 };
 
+const CITYLIFE_NODE_STATUSES = new Set<CityLifeNodeStatus>([
+  'backlog',
+  'active',
+  'blocked',
+  'done',
+]);
+const CITYLIFE_NODE_PRIORITIES = new Set<CityLifeNodePriority>(['low', 'medium', 'high']);
+
+function createStableId(prefix: string): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return `${prefix}-${globalThis.crypto.randomUUID()}`;
+  }
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function cleanText(value: unknown, maxLength: number): string {
+  return typeof value === 'string' ? value.slice(0, maxLength) : '';
+}
+
+function normalizeTask(task: Partial<CityLifeTask> | null | undefined): CityLifeTask | null {
+  if (!task) return null;
+  const text = cleanText(task.text, 500).trim();
+  if (!text) return null;
+  return {
+    id: cleanText(task.id, 160).trim() || createStableId('task'),
+    text,
+    done: task.done === true,
+  };
+}
+
+export function getCityLifeCategoryForBuilding(type: BuildingType): CityLifeCategory | null {
+  return Object.prototype.hasOwnProperty.call(CATEGORY_BY_TYPE, type)
+    ? CATEGORY_BY_TYPE[type] ?? null
+    : null;
+}
+
+export function getCityLifeDefaultNodeTitle(type: BuildingType): string {
+  const category = getCityLifeCategoryForBuilding(type);
+  const typeName = Object.prototype.hasOwnProperty.call(TYPE_NAMES, type) ? TYPE_NAMES[type] : undefined;
+  return typeName ?? (category ? CITYLIFE_CATEGORY_NAMES[category] : 'Activity');
+}
+
+export function createCityLifeNodeMetadata(
+  type: BuildingType,
+  overrides: Partial<CityLifeNodeMetadata> = {},
+): CityLifeNodeMetadata {
+  const now = Date.now();
+  const status = CITYLIFE_NODE_STATUSES.has(overrides.status as CityLifeNodeStatus)
+    ? (overrides.status as CityLifeNodeStatus)
+    : 'backlog';
+  const priority = CITYLIFE_NODE_PRIORITIES.has(overrides.priority as CityLifeNodePriority)
+    ? (overrides.priority as CityLifeNodePriority)
+    : 'medium';
+  const tasks = Array.isArray(overrides.tasks)
+    ? overrides.tasks.map((task) => normalizeTask(task)).filter((task): task is CityLifeTask => task !== null)
+    : [];
+  const dueDate = cleanText(overrides.dueDate, 32).trim();
+
+  return {
+    id: cleanText(overrides.id, 160).trim() || createStableId('activity'),
+    title: cleanText(overrides.title, 180).trim() || getCityLifeDefaultNodeTitle(type),
+    notes: cleanText(overrides.notes, 10_000),
+    nextAction: cleanText(overrides.nextAction, 500),
+    status,
+    priority,
+    ...(dueDate ? { dueDate } : {}),
+    tasks,
+    createdAt: Number.isFinite(overrides.createdAt) ? Number(overrides.createdAt) : now,
+    updatedAt: Number.isFinite(overrides.updatedAt) ? Number(overrides.updatedAt) : now,
+  };
+}
+
+function replaceBuildingMetadata(
+  state: GameState,
+  x: number,
+  y: number,
+  metadata: CityLifeNodeMetadata,
+): GameState {
+  const tile = state.grid[y]?.[x];
+  if (!tile) return state;
+
+  const grid = [...state.grid];
+  grid[y] = [...grid[y]];
+  grid[y][x] = {
+    ...tile,
+    building: {
+      ...tile.building,
+      cityLife: metadata,
+    },
+  };
+  return { ...state, grid };
+}
+
+/** Adds or normalizes metadata for every CityLife building in an imported/legacy state. */
+export function migrateCityLifeNodeMetadata(state: GameState): GameState {
+  let next = state.gameMode === 'citylife' ? state : { ...state, gameMode: 'citylife' as const };
+  const seenIds = new Set<string>();
+  for (let y = 0; y < state.gridSize; y += 1) {
+    for (let x = 0; x < state.gridSize; x += 1) {
+      const building = next.grid[y]?.[x]?.building;
+      if (!building || !isBuildableNode(building.type)) continue;
+      // Always pass imported metadata through the bounded, plain-text
+      // normalizer. A superficially complete object can still contain malformed
+      // checklist items or overlong strings.
+      let metadata = createCityLifeNodeMetadata(building.type, building.cityLife ?? {});
+      if (seenIds.has(metadata.id)) {
+        metadata = createCityLifeNodeMetadata(building.type, { ...metadata, id: '' });
+      }
+      seenIds.add(metadata.id);
+      next = replaceBuildingMetadata(next, x, y, metadata);
+    }
+  }
+  return next;
+}
+
+export function updateCityLifeNodeMetadata(
+  state: GameState,
+  nodeId: string,
+  nextMetadata: CityLifeNodeMetadata,
+): GameState {
+  for (let y = 0; y < state.gridSize; y += 1) {
+    for (let x = 0; x < state.gridSize; x += 1) {
+      const building = state.grid[y]?.[x]?.building;
+      if (!building || building.cityLife?.id !== nodeId || !isBuildableNode(building.type)) continue;
+      const metadata = createCityLifeNodeMetadata(building.type, {
+        ...nextMetadata,
+        id: nodeId,
+        createdAt: building.cityLife.createdAt,
+        updatedAt: Date.now(),
+      });
+      return replaceBuildingMetadata(state, x, y, metadata);
+    }
+  }
+  return state;
+}
+
+export type CityLifeMoveResult =
+  | { ok: true; state: GameState }
+  | { ok: false; state: GameState; reason: string };
+
+/** Moves a commitment while preserving its stable ID and planning metadata. */
+export function moveCityLifeNode(
+  state: GameState,
+  from: CityLifeCoord,
+  to: CityLifeCoord,
+): CityLifeMoveResult {
+  if (from.x === to.x && from.y === to.y) {
+    return { ok: false, state, reason: 'Choose a different destination.' };
+  }
+
+  const source = state.grid[from.y]?.[from.x]?.building;
+  if (!source || !isBuildableNode(source.type)) {
+    return { ok: false, state, reason: 'Select an activity building to move.' };
+  }
+  if (!state.grid[to.y]?.[to.x]) {
+    return { ok: false, state, reason: 'That destination is outside the city.' };
+  }
+
+  const cleared = bulldozeTile(state, from.x, from.y);
+  const placed = placeBuilding(cleared, to.x, to.y, source.type, null);
+  if (placed === cleared) {
+    return { ok: false, state, reason: 'Move to an empty land tile.' };
+  }
+
+  const metadata = createCityLifeNodeMetadata(source.type, {
+    ...(source.cityLife ?? {}),
+    updatedAt: Date.now(),
+  });
+  return { ok: true, state: replaceBuildingMetadata(placed, to.x, to.y, metadata) };
+}
+
 export const CITYLIFE_TOOLS: CityLifeTool[] = [
   { tool: 'select', label: 'Select', description: 'Inspect tiles', section: 'actions' },
   { tool: 'road', label: 'Road', description: 'Connect activity nodes', section: 'build' },
@@ -191,7 +389,7 @@ export function placeCityLifeToolBuilding(state: GameState, x: number, y: number
   for (const buildingType of candidates) {
     const next = placeBuilding(state, x, y, buildingType, null);
     if (next !== state) {
-      return next;
+      return replaceBuildingMetadata(next, x, y, createCityLifeNodeMetadata(buildingType));
     }
   }
 
@@ -211,7 +409,7 @@ function isRoadType(type: BuildingType): boolean {
 }
 
 function isBuildableNode(type: BuildingType): type is BuildingType {
-  return CATEGORY_BY_TYPE[type] !== undefined;
+  return Object.prototype.hasOwnProperty.call(CATEGORY_BY_TYPE, type);
 }
 
 function addMetricVector(target: MetricVector, delta: MetricVector): void {
@@ -264,7 +462,8 @@ function pairEffect(a: CityLifeCategory, b: CityLifeCategory, weight: number): M
 }
 
 function getNodeName(type: BuildingType, category: CityLifeCategory): string {
-  return TYPE_NAMES[type] ?? CATEGORY_NAMES[category];
+  return (Object.prototype.hasOwnProperty.call(TYPE_NAMES, type) ? TYPE_NAMES[type] : undefined)
+    ?? CITYLIFE_CATEGORY_NAMES[category];
 }
 
 function getAdjacentRoadTiles(
@@ -274,8 +473,8 @@ function getAdjacentRoadTiles(
   y: number,
   width: number,
   height: number,
-): Coord[] {
-  const points = new Map<string, Coord>();
+): CityLifeCoord[] {
+  const points = new Map<string, CityLifeCoord>();
 
   const addIfRoad = (tx: number, ty: number) => {
     if (tx < 0 || ty < 0 || tx >= gridSize || ty >= gridSize) return;
@@ -295,11 +494,11 @@ function getAdjacentRoadTiles(
   return Array.from(points.values());
 }
 
-function bfsRoadDistances(grid: Tile[][], gridSize: number, sources: Coord[]): Int16Array {
+function bfsRoadDistances(grid: Tile[][], gridSize: number, sources: CityLifeCoord[]): Int16Array {
   const distance = new Int16Array(gridSize * gridSize);
   distance.fill(-1);
 
-  const queue: Coord[] = [];
+  const queue: CityLifeCoord[] = [];
   for (const source of sources) {
     const idx = source.y * gridSize + source.x;
     if (distance[idx] !== -1) continue;
@@ -314,7 +513,7 @@ function bfsRoadDistances(grid: Tile[][], gridSize: number, sources: Coord[]): I
     head += 1;
     const baseIdx = y * gridSize + x;
     const baseDist = distance[baseIdx];
-    const neighbors: Coord[] = [
+    const neighbors: CityLifeCoord[] = [
       { x: x + 1, y },
       { x: x - 1, y },
       { x, y: y + 1 },
@@ -345,23 +544,32 @@ function buildNodes(grid: Tile[][], gridSize: number): CityLifeNode[] {
       const type = tile.building.type;
       if (!isBuildableNode(type)) continue;
 
-      const category = CATEGORY_BY_TYPE[type];
+      const category = getCityLifeCategoryForBuilding(type);
       if (!category) continue;
 
-      const size = getBuildingSize(type);
+      const size = getBuildingSize(type, true);
       const adjacentRoads = getAdjacentRoadTiles(grid, gridSize, x, y, size.width, size.height);
       const complete = (tile.building.constructionProgress ?? 100) >= 100;
       const active = complete && adjacentRoads.length > 0;
+      const metadata = createCityLifeNodeMetadata(type, {
+        ...(tile.building.cityLife ?? {}),
+        id: tile.building.cityLife?.id || `legacy-${type}-${x}-${y}`,
+        createdAt: tile.building.cityLife?.createdAt ?? 0,
+        updatedAt: tile.building.cityLife?.updatedAt ?? 0,
+      });
 
       nodes.push({
-        id: `${type}-${x}-${y}`,
+        id: metadata.id,
         type,
-        name: getNodeName(type, category),
+        name: metadata.title || getNodeName(type, category),
         category,
         x,
         y,
         active,
         adjacentRoads,
+        metadata,
+        impact: { income: 0, happiness: 0, wellness: 0 },
+        relationshipCount: 0,
       });
     }
   }
@@ -459,6 +667,15 @@ export function calculateCityLifeSnapshot(grid: Tile[][], gridSize: number): Cit
   }
 
   edges.sort((a, b) => b.weight - a.weight);
+  const relationshipCounts = new Map<string, number>();
+  for (const edge of edges) {
+    relationshipCounts.set(edge.sourceId, (relationshipCounts.get(edge.sourceId) ?? 0) + 1);
+    relationshipCounts.set(edge.targetId, (relationshipCounts.get(edge.targetId) ?? 0) + 1);
+  }
+  for (const node of nodes) {
+    node.impact = { ...(scores.get(node.id) ?? { income: 0, happiness: 0, wellness: 0 }) };
+    node.relationshipCount = relationshipCounts.get(node.id) ?? 0;
+  }
 
   return {
     income: clamp(metrics.income, 0, 100),
@@ -499,6 +716,7 @@ function clearToGrass(state: GameState): GameState {
         constructionProgress: 100,
         abandoned: false,
         flipped: false,
+        cityLife: undefined,
       },
     })),
   );
@@ -529,8 +747,27 @@ function forceCompleteConstruction(state: GameState): GameState {
   return { ...state, grid };
 }
 
+function finalizeCityLifeState(state: GameState): GameState {
+  const complete = forceCompleteConstruction(state);
+  return {
+    ...complete,
+    stats: {
+      ...complete.stats,
+      money: CITYLIFE_UNLIMITED_MONEY,
+    },
+    speed: 0,
+    selectedTool: 'select',
+    activePanel: 'none',
+    disastersEnabled: false,
+  };
+}
+
+export function createBlankCityLifeState(gridSize = 40): GameState {
+  return finalizeCityLifeState(clearToGrass(createInitialGameState(gridSize, 'CityLife', 'citylife')));
+}
+
 export function createCityLifeStarterState(gridSize = 40): GameState {
-  let state = createInitialGameState(gridSize, 'CityLife');
+  let state = createInitialGameState(gridSize, 'CityLife', 'citylife');
   state = clearToGrass(state);
 
   // Match the original non-IsoCity starter layout.
@@ -545,38 +782,37 @@ export function createCityLifeStarterState(gridSize = 40): GameState {
     state = placeBuilding(state, road.x, road.y, 'road', null);
   }
 
-  const buildings: Array<{ x: number; y: number; type: BuildingType }> = [
-    { x: 10, y: 13, type: 'house_small' },
-    { x: 11, y: 13, type: 'house_small' },
-    { x: 10, y: 15, type: 'house_small' },
-    { x: 13, y: 13, type: 'house_small' },
-    { x: 13, y: 15, type: 'house_small' },
-    { x: 6, y: 12, type: 'office_low' },
-    { x: 19, y: 12, type: 'office_high' },
-    { x: 19, y: 16, type: 'factory_small' },
-    { x: 14, y: 11, type: 'park' },
-    { x: 16, y: 17, type: 'shop_medium' },
-    { x: 10, y: 16, type: 'hospital' },
-    { x: 16, y: 15, type: 'school' },
-    { x: 8, y: 15, type: 'park' },
-    { x: 8, y: 13, type: 'house_small' },
+  const buildings: Array<{
+    x: number;
+    y: number;
+    type: BuildingType;
+    metadata: Partial<CityLifeNodeMetadata>;
+  }> = [
+    { x: 10, y: 13, type: 'house_small', metadata: { title: 'Home base', status: 'active', nextAction: 'Choose three priorities for the week' } },
+    { x: 11, y: 13, type: 'house_small', metadata: { title: 'Rest & sleep', status: 'active', nextAction: 'Set a consistent wind-down time' } },
+    { x: 10, y: 15, type: 'house_small', metadata: { title: 'Household admin', nextAction: 'Clear the most urgent household task' } },
+    { x: 13, y: 13, type: 'house_small', metadata: { title: 'Family time', status: 'active' } },
+    { x: 13, y: 15, type: 'house_small', metadata: { title: 'Personal routines' } },
+    { x: 6, y: 12, type: 'office_low', metadata: { title: 'Career planning', status: 'active', nextAction: 'Review the next milestone' } },
+    { x: 19, y: 12, type: 'office_high', metadata: { title: 'Future opportunities', status: 'backlog' } },
+    { x: 19, y: 16, type: 'factory_small', metadata: { title: 'Current client work', status: 'active', priority: 'high', nextAction: 'Complete the next deliverable' } },
+    { x: 14, y: 11, type: 'park', metadata: { title: 'Rest & recovery', status: 'active' } },
+    { x: 16, y: 17, type: 'shop_medium', metadata: { title: 'Friends & errands', status: 'backlog' } },
+    { x: 10, y: 16, type: 'hospital', metadata: { title: 'Health routines', status: 'active', nextAction: 'Schedule the next check-in' } },
+    { x: 16, y: 15, type: 'school', metadata: { title: 'Learning plan', status: 'active', nextAction: 'Finish one focused lesson' } },
+    { x: 8, y: 15, type: 'park', metadata: { title: 'Creative time', status: 'backlog' } },
+    { x: 8, y: 13, type: 'house_small', metadata: { title: 'Weekly foundations', status: 'active' } },
   ];
 
   for (const building of buildings) {
     state = placeBuilding(state, building.x, building.y, building.type, null);
+    state = replaceBuildingMetadata(
+      state,
+      building.x,
+      building.y,
+      createCityLifeNodeMetadata(building.type, building.metadata),
+    );
   }
 
-  state = forceCompleteConstruction(state);
-
-  return {
-    ...state,
-    stats: {
-      ...state.stats,
-      money: CITYLIFE_UNLIMITED_MONEY,
-    },
-    speed: 0,
-    selectedTool: 'road',
-    activePanel: 'none',
-    disastersEnabled: false,
-  };
+  return finalizeCityLifeState(state);
 }

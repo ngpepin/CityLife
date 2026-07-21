@@ -754,7 +754,7 @@ function createBuilding(type: BuildingType): Building {
 }
 
 function isCityLifeState(state: GameState): boolean {
-  return state.cityName === 'CityLife';
+  return state.gameMode === 'citylife';
 }
 
 function isUtilityFreeBuildingType(type: BuildingType): boolean {
@@ -1169,7 +1169,11 @@ function generateUUID(): string {
   });
 }
 
-export function createInitialGameState(size: number = DEFAULT_GRID_SIZE, cityName: string = 'New City'): GameState {
+export function createInitialGameState(
+  size: number = DEFAULT_GRID_SIZE,
+  cityName: string = 'New City',
+  gameMode: GameState['gameMode'] = 'isocity',
+): GameState {
   const { grid, waterBodies } = generateTerrain(size);
   const adjacentCities = generateAdjacentCities();
   
@@ -1198,6 +1202,7 @@ export function createInitialGameState(size: number = DEFAULT_GRID_SIZE, cityNam
     id: generateUUID(),
     grid,
     gridSize: size,
+    gameMode,
     cityName,
     year: 2024,
     month: 1,
@@ -2256,7 +2261,7 @@ export function simulateTick(state: GameState): GameState {
 
       // Cleanup orphaned 'empty' tiles
       if (tile.building.type === 'empty') {
-        const origin = findBuildingOrigin(newGrid, x, y, size);
+        const origin = findBuildingOrigin(newGrid, x, y, size, cityLifeMode);
         if (!origin) {
           tile.building = createBuilding('grass');
           tile.building.powered = newPowered;
@@ -2528,25 +2533,20 @@ const BUILDING_SIZES: Partial<Record<BuildingType, { width: number; height: numb
   rail_station: { width: 2, height: 2 },
 };
 
-// CityLife hack: force all buildings to occupy a single tile footprint.
-// Set to false to restore per-building footprint sizes from BUILDING_SIZES.
-const FORCE_SINGLE_TILE_FOOTPRINTS = true;
-
-export function isSingleTileFootprintHackEnabled(): boolean {
-  return FORCE_SINGLE_TILE_FOOTPRINTS;
-}
-
-// Get the size of a building (how many tiles it spans)
-export function getBuildingSize(buildingType: BuildingType): { width: number; height: number } {
-  if (FORCE_SINGLE_TILE_FOOTPRINTS) {
+// CityLife presents every node as a single lot, while the base IsoCity simulation
+// keeps the configured multi-tile footprints below. Callers must opt in explicitly
+// so CityLife's layout rule cannot leak into the engine's default mode.
+export function getBuildingSize(
+  buildingType: BuildingType,
+  cityLifeMode = false
+): { width: number; height: number } {
+  if (cityLifeMode) {
     return { width: 1, height: 1 };
   }
   return BUILDING_SIZES[buildingType] || { width: 1, height: 1 };
 }
 
 // Get the canonical footprint size for rendering/visual alignment.
-// This ignores FORCE_SINGLE_TILE_FOOTPRINTS so visual anchoring can still account
-// for assets authored as larger footprints.
 export function getNominalBuildingSize(buildingType: BuildingType): { width: number; height: number } {
   return BUILDING_SIZES[buildingType] || { width: 1, height: 1 };
 }
@@ -2737,9 +2737,10 @@ function applyBuildingFootprint(
   buildingType: BuildingType,
   zone: ZoneType,
   level: number,
-  services?: ServiceCoverage
+  services?: ServiceCoverage,
+  cityLifeMode = false
 ): Building {
-  const size = getBuildingSize(buildingType);
+  const size = getBuildingSize(buildingType, cityLifeMode);
   const stats = BUILDING_STATS[buildingType] || { maxPop: 0, maxJobs: 0, pollution: 0, landValue: 0 };
 
   for (let dy = 0; dy < size.height; dy++) {
@@ -2812,11 +2813,11 @@ export function placeBuilding(
     // Regular zoning can only be applied to grass, tree, or road tiles
     if (zone === 'none') {
       // Check if this tile is part of a multi-tile building (handles both origin and 'empty' tiles)
-      const origin = findBuildingOrigin(newGrid, x, y, state.gridSize);
+      const origin = findBuildingOrigin(newGrid, x, y, state.gridSize, cityLifeMode);
       
       if (origin) {
         // Dezone the entire multi-tile building
-        const size = getBuildingSize(origin.buildingType);
+        const size = getBuildingSize(origin.buildingType, cityLifeMode);
         for (let dy = 0; dy < size.height; dy++) {
           for (let dx = 0; dx < size.width; dx++) {
             const clearX = origin.originX + dx;
@@ -2847,7 +2848,7 @@ export function placeBuilding(
       newGrid[y][x].zone = zone;
     }
   } else if (buildingType) {
-    const size = getBuildingSize(buildingType);
+    const size = getBuildingSize(buildingType, cityLifeMode);
     
     // Check water adjacency requirement for waterfront buildings (marina, pier)
     let shouldFlip = false;
@@ -2864,7 +2865,7 @@ export function placeBuilding(
       if (!canPlaceMultiTileBuilding(newGrid, x, y, size.width, size.height, state.gridSize)) {
         return state; // Can't place here
       }
-      applyBuildingFootprint(newGrid, x, y, buildingType, 'none', 1);
+      applyBuildingFootprint(newGrid, x, y, buildingType, 'none', 1, undefined, cityLifeMode);
       // Set flip for waterfront buildings to face the water
       if (shouldFlip) {
         newGrid[y][x].building.flipped = true;
@@ -2928,7 +2929,8 @@ function findBuildingOrigin(
   grid: Tile[][],
   x: number,
   y: number,
-  gridSize: number
+  gridSize: number,
+  cityLifeMode = false
 ): { originX: number; originY: number; buildingType: BuildingType } | null {
   const tile = grid[y]?.[x];
   if (!tile) return null;
@@ -2937,7 +2939,7 @@ function findBuildingOrigin(
   if (tile.building.type !== 'empty' && tile.building.type !== 'grass' && 
       tile.building.type !== 'water' && tile.building.type !== 'road' && 
       tile.building.type !== 'bridge' && tile.building.type !== 'rail' && tile.building.type !== 'tree') {
-    const size = getBuildingSize(tile.building.type);
+    const size = getBuildingSize(tile.building.type, cityLifeMode);
     if (size.width > 1 || size.height > 1) {
       return { originX: x, originY: y, buildingType: tile.building.type };
     }
@@ -2962,7 +2964,10 @@ function findBuildingOrigin(
               checkTile.building.type !== 'bridge' &&
               checkTile.building.type !== 'rail' &&
               checkTile.building.type !== 'tree') {
-            const size = getBuildingSize(checkTile.building.type);
+            const size = getBuildingSize(
+              checkTile.building.type,
+              cityLifeMode
+            );
             // Check if this building's footprint includes our original tile
             if (x >= checkX && x < checkX + size.width &&
                 y >= checkY && y < checkY + size.height) {
@@ -3103,11 +3108,12 @@ export function bulldozeTile(state: GameState, x: number, y: number): GameState 
   }
   
   // Check if this tile is part of a multi-tile building
-  const origin = findBuildingOrigin(newGrid, x, y, state.gridSize);
+  const cityLifeMode = isCityLifeState(state);
+  const origin = findBuildingOrigin(newGrid, x, y, state.gridSize, cityLifeMode);
   
   if (origin) {
     // Bulldoze the entire multi-tile building
-    const size = getBuildingSize(origin.buildingType);
+    const size = getBuildingSize(origin.buildingType, cityLifeMode);
     for (let dy = 0; dy < size.height; dy++) {
       for (let dx = 0; dx < size.width; dx++) {
         const clearX = origin.originX + dx;
@@ -3176,11 +3182,12 @@ export function placeWaterTerraform(state: GameState, x: number, y: number): Gam
   const newGrid = state.grid.map(row => row.map(t => ({ ...t, building: { ...t.building } })));
   
   // Check if this tile is part of a multi-tile building
-  const origin = findBuildingOrigin(newGrid, x, y, state.gridSize);
+  const cityLifeMode = isCityLifeState(state);
+  const origin = findBuildingOrigin(newGrid, x, y, state.gridSize, cityLifeMode);
   
   if (origin) {
     // Clear the entire multi-tile building first, then place water on this tile
-    const size = getBuildingSize(origin.buildingType);
+    const size = getBuildingSize(origin.buildingType, cityLifeMode);
     for (let dy = 0; dy < size.height; dy++) {
       for (let dx = 0; dx < size.width; dx++) {
         const clearX = origin.originX + dx;

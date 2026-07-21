@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type { CityLifeSnapshot } from '@/lib/citylife';
+import type { CityLifeSnapshot, MetricVector } from '@/lib/citylife';
 
 declare global {
   interface Window {
@@ -26,6 +26,7 @@ type GraphEdge = {
   to: string;
   distance: number;
   weight: number;
+  delta: MetricVector;
 };
 
 const MAX_EDGES_PER_NODE = 4;
@@ -88,6 +89,11 @@ function categoryLabel(category: string): string {
   return category.replace('_', ' ');
 }
 
+function signed(value: number): string {
+  if (Math.abs(value) < 0.005) return '0.00';
+  return `${value > 0 ? '+' : '−'}${Math.abs(value).toFixed(2)}`;
+}
+
 function buildGraphData(snapshot: CityLifeSnapshot): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const nodes: GraphNode[] = snapshot.nodes.map((node) => ({
     id: node.id,
@@ -104,6 +110,7 @@ function buildGraphData(snapshot: CityLifeSnapshot): { nodes: GraphNode[]; edges
     to: edge.targetId,
     distance: edge.distance,
     weight: edge.weight,
+    delta: edge.delta,
   }));
 
   const byNode = new Map<string, GraphEdge[]>();
@@ -143,6 +150,8 @@ export function CityLifeRelationshipGraphModal({
   snapshot: CityLifeSnapshot;
 }) {
   const graphRef = useRef<HTMLDivElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const networkRef = useRef<any>(null);
   const [distanceMode, setDistanceMode] = useState(false);
   const [selectedInfo, setSelectedInfo] = useState(() => defaultSelectionText(snapshot));
@@ -159,13 +168,48 @@ export function CityLifeRelationshipGraphModal({
   const graphData = useMemo(() => buildGraphData(snapshot), [snapshot]);
 
   useEffect(() => {
+    const previouslyFocused = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    closeButtonRef.current?.focus();
+
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
+        event.preventDefault();
         onClose();
+        return;
+      }
+
+      if (event.key !== 'Tab' || !dialogRef.current) return;
+      const focusable = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialogRef.current.focus();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
       }
     };
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      previouslyFocused?.focus();
+    };
   }, [onClose]);
 
   useEffect(() => {
@@ -185,7 +229,6 @@ export function CityLifeRelationshipGraphModal({
     };
 
     const init = async () => {
-      setGraphError(null);
       await loadVisNetwork();
       if (cancelled || !graphRef.current) return;
 
@@ -257,6 +300,7 @@ export function CityLifeRelationshipGraphModal({
           smooth: { type: 'dynamic', roundness: 0.35 },
           distance: edge.distance,
           weight: edge.weight,
+          delta: edge.delta,
         };
       });
 
@@ -326,7 +370,7 @@ export function CityLifeRelationshipGraphModal({
       network.on('hoverEdge', (params: any) => {
         const edge = edgeByIdRef.current.get(params.edge);
         const text = edge
-          ? `distance=${edge.distance}, weight=${edge.weight.toFixed(2)}`
+          ? `distance=${edge.distance}, weight=${edge.weight.toFixed(2)}, ΔI ${signed(edge.delta.income)}, ΔH ${signed(edge.delta.happiness)}, ΔW ${signed(edge.delta.wellness)}`
           : String(params.edge);
         setTooltip({
           visible: true,
@@ -362,8 +406,10 @@ export function CityLifeRelationshipGraphModal({
       network.on('selectEdge', (params: any) => {
         const edge = edgeByIdRef.current.get(params.edges[0]);
         if (!edge) return;
+        const source = nodeByIdRef.current.get(edge.from)?.name ?? 'Unknown activity';
+        const target = nodeByIdRef.current.get(edge.to)?.name ?? 'Unknown activity';
         setSelectedInfo(
-          `Edge\nRoad distance: ${edge.distance}\nInfluence weight: ${edge.weight.toFixed(2)}\nShorter road distance means stronger effect.`,
+          `${source} ↔ ${target}\nRoad distance: ${edge.distance} steps\nInfluence weight: ${edge.weight.toFixed(2)}\nΔ Income: ${signed(edge.delta.income)}\nΔ Happiness: ${signed(edge.delta.happiness)}\nΔ Wellness: ${signed(edge.delta.wellness)}\nShorter road distance means stronger influence.`,
         );
       });
     };
@@ -408,14 +454,25 @@ export function CityLifeRelationshipGraphModal({
         }
       }}
     >
-      <div className="relative h-[min(780px,96vh)] w-[min(1240px,98vw)] overflow-hidden rounded-lg border border-white/15 bg-slate-950 shadow-2xl">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="citylife-graph-title"
+        aria-describedby="citylife-graph-description"
+        tabIndex={-1}
+        className="relative h-[min(780px,96vh)] w-[min(1240px,98vw)] overflow-hidden rounded-lg border border-white/15 bg-slate-950 shadow-2xl"
+      >
         <div className="flex items-center justify-between border-b border-white/10 bg-slate-900/85 px-4 py-3">
           <div>
-            <div className="text-sm font-semibold text-white">Relationship Graph</div>
-            <div className="text-xs text-slate-400">Obsidian-style network of active and inactive CityLife nodes</div>
+            <div id="citylife-graph-title" className="text-sm font-semibold text-white">Relationship Graph</div>
+            <div id="citylife-graph-description" className="text-xs text-slate-400">
+              A sparse network of active and inactive activities; weak or zero-effect pairs may be omitted.
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <button
+              ref={closeButtonRef}
               type="button"
               onClick={() => setDistanceMode((prev) => !prev)}
               className={`rounded border px-2 py-1 text-xs ${

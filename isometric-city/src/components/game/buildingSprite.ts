@@ -9,7 +9,7 @@
 import { Building, BuildingType } from '@/types/game';
 import { SpritePack, getActiveSpritePack, getSpriteCoords, BUILDING_TO_SPRITE, SPRITE_VERTICAL_OFFSETS, SPRITE_HORIZONTAL_OFFSETS } from '@/lib/renderConfig';
 import { getCityLifeMappedSpriteForBuilding } from '@/lib/citylifeSpriteMapping';
-import { getBuildingSize, isSingleTileFootprintHackEnabled, requiresWaterAdjacency } from '@/lib/simulation';
+import { getBuildingSize, requiresWaterAdjacency } from '@/lib/simulation';
 import { TILE_WIDTH, TILE_HEIGHT } from './types';
 
 // ============================================================================
@@ -88,7 +88,8 @@ export function selectSpriteSource(
   building: Building,
   tileX: number,
   tileY: number,
-  activePack: SpritePack = getActiveSpritePack()
+  activePack: SpritePack = getActiveSpritePack(),
+  cityLifeMode = false,
 ): SpriteSourceResult {
   const isUnderConstruction = building.constructionProgress !== undefined &&
                               building.constructionProgress < 100;
@@ -96,8 +97,11 @@ export function selectSpriteSource(
   const isConstructionPhase = isUnderConstruction && constructionProgress >= 40;
   const isAbandoned = building.abandoned === true;
 
-  // CityLife JSON-driven category mapping override
-  const mappedSprite = getCityLifeMappedSpriteForBuilding(buildingType, tileX, tileY, activePack);
+  // CityLife JSON-driven category mapping override. Both the route mode and
+  // metadata tag are required, so tagged data cannot alter base IsoCity art.
+  const mappedSprite = cityLifeMode && building.cityLife !== undefined
+    ? getCityLifeMappedSpriteForBuilding(buildingType, tileX, tileY, activePack)
+    : null;
   if (mappedSprite) {
     return {
       source: mappedSprite.source,
@@ -311,10 +315,10 @@ export function calculateSpriteCoords(
   source: SpriteSourceResult,
   sheetWidth: number,
   sheetHeight: number,
-  activePack: SpritePack = getActiveSpritePack()
+  activePack: SpritePack = getActiveSpritePack(),
+  forceSingleTile = false
 ): SpriteCoords | null {
   const { variantType, variant } = source;
-  const forceSingleTile = isSingleTileFootprintHackEnabled();
 
   // CityLife JSON-driven category mapping coordinates
   if (variantType === 'citylifeMapped' && variant) {
@@ -613,9 +617,10 @@ export function calculateSpriteScale(
   buildingType: BuildingType,
   source: SpriteSourceResult,
   building: Building,
-  activePack: SpritePack = getActiveSpritePack()
+  activePack: SpritePack = getActiveSpritePack(),
+  cityLifeMode = false,
 ): number {
-  if (isSingleTileFootprintHackEnabled()) {
+  if (cityLifeMode) {
     return activePack.globalScale ?? 1;
   }
 
@@ -734,9 +739,10 @@ export function calculateSpriteOffsets(
   buildingType: BuildingType,
   source: SpriteSourceResult,
   building: Building,
-  activePack: SpritePack = getActiveSpritePack()
+  activePack: SpritePack = getActiveSpritePack(),
+  cityLifeMode = false,
 ): { vertical: number; horizontal: number } {
-  if (isSingleTileFootprintHackEnabled()) {
+  if (cityLifeMode) {
     return { vertical: 0, horizontal: 0 };
   }
 
@@ -882,23 +888,52 @@ export function getSpriteRenderInfo(
   options: {
     hasAdjacentRoad?: boolean;
     shouldFlipForRoad?: boolean;
+    cityLifeMode?: boolean;
   } = {},
   activePack: SpritePack = getActiveSpritePack()
 ): SpriteRenderInfo | null {
+  const forceSingleTile = options.cityLifeMode === true;
+
   // Select sprite source
-  const source = selectSpriteSource(buildingType, building, tileX, tileY, activePack);
+  const source = selectSpriteSource(
+    buildingType,
+    building,
+    tileX,
+    tileY,
+    activePack,
+    forceSingleTile,
+  );
   
   // Calculate coordinates
-  const coords = calculateSpriteCoords(buildingType, source, sheetWidth, sheetHeight, activePack);
+  const coords = calculateSpriteCoords(
+    buildingType,
+    source,
+    sheetWidth,
+    sheetHeight,
+    activePack,
+    forceSingleTile
+  );
   if (!coords) {
     return null;
   }
   
   // Calculate scale
-  const scaleMultiplier = calculateSpriteScale(buildingType, source, building, activePack);
+  const scaleMultiplier = calculateSpriteScale(
+    buildingType,
+    source,
+    building,
+    activePack,
+    forceSingleTile,
+  );
   
   // Calculate offsets
-  const offsets = calculateSpriteOffsets(buildingType, source, building, activePack);
+  const offsets = calculateSpriteOffsets(
+    buildingType,
+    source,
+    building,
+    activePack,
+    forceSingleTile,
+  );
   
   // Calculate destination size
   const w = TILE_WIDTH;
@@ -908,7 +943,7 @@ export function getSpriteRenderInfo(
   const destHeight = destWidth * aspectRatio;
   
   // Calculate position
-  const footprintForLayout = getBuildingSize(buildingType);
+  const footprintForLayout = getBuildingSize(buildingType, forceSingleTile);
   const isMultiTile = footprintForLayout.width > 1 || footprintForLayout.height > 1;
   
   let drawPosX = screenX;
@@ -927,7 +962,7 @@ export function getSpriteRenderInfo(
   const drawX = drawPosX + w / 2 - destWidth / 2 + offsets.horizontal * w;
   
   let verticalPush: number;
-  if (isSingleTileFootprintHackEnabled()) {
+  if (forceSingleTile) {
     verticalPush = 0;
   } else if (isMultiTile) {
     const footprintDepth = footprintForLayout.width + footprintForLayout.height - 2;

@@ -6,7 +6,7 @@ import { CityLifeMode } from '@/components/citylife/CityLifeMode';
 
 export default function CityLifePage() {
   return (
-    <GameProvider startFresh disablePersistence>
+    <GameProvider startFresh disablePersistence gameMode="citylife">
       <CityLifeMode />
     </GameProvider>
   );

@@ -41,9 +41,10 @@ CityLife is a life-planning simulation mapped onto a city:
 
 Primary user loop:
 
-1. Place/move/remove roads and buildings.
-2. Observe Income/Happiness/Wellness.
-3. Inspect active/inactive node effects and influence summaries.
+1. Capture and place a named activity.
+2. Connect, edit, move, or remove activities and roads.
+3. Observe Income/Happiness/Wellness and inspect their attribution.
+4. Return to the same browser-local plan or move it through JSON export/import.
 
 ---
 
@@ -52,7 +53,7 @@ Primary user loop:
 Unless explicitly changed by product direction, preserve these:
 
 1. **Road adjacency gating (CityLife metrics)**  
-   A building contributes as active only when orthogonally adjacent to a road tile.
+   A building contributes as active only when orthogonally adjacent to a road or bridge tile.
 
 2. **Distance over road graph only**  
    Influence distance is shortest-path BFS over road/bridge tiles between adjacent-road sets.
@@ -76,7 +77,7 @@ Unless explicitly changed by product direction, preserve these:
 ### Repo root
 
 - `README.md` and `AGENTS.md`: repo-level docs (this file)
-- `citylife-config/citylifeSpriteMapping.json`: CityLife sprite/category source-of-truth config
+- `citylife-config/citylifeSpriteMapping.json`: CityLife art-mapping source of truth; semantic categories live in `isometric-city/src/lib/citylife.ts`
 - `run_citylife.sh`: root launcher for dev/build/prod flows
 - `old-approach/`: archived pre-engine prototype
 - `paper/`: concept and paper drafts
@@ -84,26 +85,52 @@ Unless explicitly changed by product direction, preserve these:
 ### Active implementation (`isometric-city/`)
 
 - `src/app/citylife/page.tsx`  
-  CityLife route entry (`/citylife`) using `GameProvider`.
+  CityLife route entry (`/citylife`) using an explicit `gameMode="citylife"` provider boundary.
+
+- `src/app/citylife/layout.tsx`
+  Route-specific metadata for the CityLife product.
 
 - `src/components/citylife/CityLifeMode.tsx`  
-  CityLife UI shell, tool panel, top metrics, starter city reset, sprite pack selection.
+  CityLife UI shell and workflow orchestration: onboarding, capture, persistence, tools, move/undo, and modal routing.
+
+- `src/components/citylife/CityLifeNodeEditor.tsx`
+  Activity details and task-checklist editor.
+
+- `src/components/citylife/CityLifeInsightsPanel.tsx`
+  Readiness, contribution attribution, and relationship explanations.
+
+- `src/components/citylife/CityLifeOnboarding.tsx`
+  First-run blank/example/import choice.
+
+- `src/components/citylife/CityLifeRelationshipGraphModal.tsx`
+  Interactive sparse relationship graph and signed edge details.
 
 - `src/lib/citylife.ts`  
   CityLife rules and data:
   - tool/category mapping
   - random variant selection per tool
+  - stable activity metadata and migration
+  - pure activity update/move commands
   - active-node detection and road-distance influence snapshot
-  - starter city generation
+  - blank and example city generation
+
+- `src/lib/citylifeStorage.ts`
+  Versioned workspace validation, migration, local storage, and JSON portability.
+
+- `src/games/isocity/types/buildings.ts`
+  Canonical optional CityLife activity metadata types on engine buildings.
 
 - `src/context/GameContext.tsx`  
-  Placement flow integration; CityLife budget/tool behavior hooks.
+  Explicit mode boundary, placement integration, route-scoped sprite pack, and disabled shared simulation loop in CityLife.
 
 - `src/lib/simulation.ts`  
   Engine simulation core with CityLife-specific overrides for construction/utilities behavior.
 
 - `src/components/game/CanvasIsometricGrid.tsx`  
   Core rendering and interaction canvas.
+
+- `src/lib/citylife.test.ts` and `src/lib/citylifeStorage.test.ts`
+  Focused domain, movement, persistence, and validation regression tests.
 
 ---
 
@@ -114,7 +141,9 @@ Run commands from `isometric-city/`:
 ```bash
 npm install
 npm run dev
+npm test
 npm run lint
+npx tsc --noEmit --incremental false
 npm run build
 ```
 
@@ -124,8 +153,10 @@ Primary URL for this project concept:
 
 Notes:
 
+- Node.js 20.9 or newer is required by the installed Next.js version.
 - `/` remains the base IsoCity mode.
 - If Next.js warns about workspace root inference, verify commands are launched from `isometric-city/`.
+- Full lint currently reports existing findings in older engine/coaster files; touched files must still lint cleanly.
 
 ---
 
@@ -153,25 +184,31 @@ When something looks wrong, use this order:
    Run `npm run dev` and fix the first TypeScript/runtime error.
 
 2. **Wrong mode check**  
-   Ensure testing happens on `/citylife`, not `/`.
+   Ensure testing happens on `/citylife`, not `/`, and confirm `GameProvider` receives `gameMode="citylife"`.
 
-3. **Placement behavior check**  
+3. **Workspace check**
+   Inspect the visible save/import error first. CityLife autosave is deliberately gated until a validated workspace is active.
+
+4. **Placement behavior check**
    Verify `GameContext.placeAtTile` CityLife path is executing:
    - unlimited budget branch
    - CityLife tool variant placement
 
-4. **Simulation override check**  
+5. **Simulation override check**
    Verify CityLife-specific overrides still force complete/serviced behavior.
 
-5. **Rendering path check**  
+6. **Rendering path check**
    Validate `CanvasIsometricGrid` receives expected tile/building data.
 
 ---
 
 ## 7) Manual Test Checklist (CityLife)
 
-- [ ] Load `/citylife`; starter city appears immediately.
-- [ ] Income/Happiness/Wellness cards update with edits.
+- [ ] With no saved workspace, onboarding offers blank, example, and import paths.
+- [ ] With a valid save, reload restores geometry, metadata, and stable activity IDs.
+- [ ] Quick capture places a named activity and opens its editor.
+- [ ] Activity title, status, priority, due date, notes, next action, and checklist persist.
+- [ ] Income/Happiness/Wellness cards update with building and road-topology edits.
 - [ ] Roads can be placed/removed.
 - [ ] Buildings place with CityLife tool categories.
 - [ ] Category tools produce randomized variants where configured.
@@ -179,7 +216,12 @@ When something looks wrong, use this order:
 - [ ] CityLife placement is not budget-limited.
 - [ ] Building activity toggles based on orthogonal road adjacency.
 - [ ] Influence summary updates and distances reflect road topology.
-- [ ] Reset City restores starter layout.
+- [ ] Move preserves identity/details; invalid destinations do not mutate the plan.
+- [ ] One-step Undo restores the previous edit, move, placement, or bulldoze state.
+- [ ] Export/import round-trips the workspace; invalid import is non-destructive.
+- [ ] Reset example asks for confirmation.
+- [ ] At a phone-sized viewport, the canvas remains visible and core tools are reachable.
+- [ ] `/` retains base IsoCity costs, inspection, sprites, and canonical multi-tile footprints.
 
 ---
 

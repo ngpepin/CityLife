@@ -32,6 +32,30 @@ export type BridgeType = 'small' | 'medium' | 'large' | 'suspension';
 export type BridgeOrientation = 'ns' | 'ew';
 export type BridgeTrackType = 'road' | 'rail';
 
+/** Planning metadata attached only to buildings created in CityLife mode. */
+export type CityLifeNodeStatus = 'backlog' | 'active' | 'blocked' | 'done';
+export type CityLifeNodePriority = 'low' | 'medium' | 'high';
+
+export interface CityLifeTask {
+  id: string;
+  text: string;
+  done: boolean;
+}
+
+export interface CityLifeNodeMetadata {
+  /** Stable identity that survives moving the building to another tile. */
+  id: string;
+  title: string;
+  notes: string;
+  nextAction: string;
+  status: CityLifeNodeStatus;
+  priority: CityLifeNodePriority;
+  dueDate?: string;
+  tasks: CityLifeTask[];
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface Building {
   type: BuildingType;
   level: number;
@@ -53,6 +77,8 @@ export interface Building {
   bridgeIndex?: number;
   bridgeSpan?: number;
   bridgeTrackType?: BridgeTrackType;
+  /** Optional CityLife data; ignored by the base IsoCity simulation. */
+  cityLife?: CityLifeNodeMetadata;
 }
 
 export const RESIDENTIAL_BUILDINGS: BuildingType[] = ['house_small', 'house_medium', 'mansion', 'apartment_low', 'apartment_high'];

@@ -1,205 +1,218 @@
-# CityLife (IsoCity Engine Edition)
+# CityLife
 
-CityLife is a systems-based life-planning simulator implemented on top of the `isometric-city` engine and framework.
+CityLife is a local-first life-planning tool built as an isometric city. Commitments and support systems become buildings, roads represent access and support pathways, and the current arrangement is summarized as **Income**, **Happiness**, and **Wellness**.
 
-The active app is no longer the legacy plain-HTML prototype. The current runtime lives in `isometric-city/` (Next.js + TypeScript + Canvas).
+The primary product is the Next.js route at **`/citylife`**. The standard IsoCity game at `/`, the IsoCoaster route, and the plain-HTML prototype are supporting or archived material—not alternate CityLife runtimes.
 
-## Why CityLife Exists
+CityLife's scores are simplified planning signals for comparing arrangements. They are not predictions, diagnoses, or judgments about what a user should do.
 
-Most planning tools flatten life into lists. CityLife models life as an interactive system:
+## What works today
 
-- commitments become **buildings**
-- dependencies/effort pathways become **roads**
-- outcomes are tracked as coupled metrics: **Income**, **Happiness**, **Wellness**
+The current `/citylife` implementation supports a complete local planning loop:
 
-The objective is not maximizing a single score. It is maintaining sustainable balance over time.
+- first-run onboarding with an example plan, a blank plan, or JSON import
+- quick capture of a named activity followed by placement on the city grid
+- editable activity details: title, status, priority, due date, next action, notes, and task checklist
+- stable activity identity and metadata when a building moves
+- road placement, direct category placement, selection, movement, bulldozing, and one-step undo
+- automatic browser-local saving plus versioned JSON export and import
+- confirmed reset to the example plan
+- Income, Happiness, and Wellness cards that open an attribution view
+- readiness explanations for road-active, road-missing, and road-active-but-isolated activities
+- strongest relationship rows with road distance, weight, and signed metric effects
+- an interactive relationship graph
+- responsive tool access on smaller screens
 
-This framing follows the conceptual model described in `paper/Paper_draft.md`: move from overwhelm to construction by externalizing planning into a visual, rule-driven world.
+CityLife uses the rendering and placement systems in the `isometric-city/` engine, but it bypasses normal zoning, utility, construction-time, and budget restrictions for CityLife activities.
 
-## Conceptual Foundations
+## Prerequisites
 
-CityLife is designed around four ideas:
+- Node.js **20.9 or newer** (required by the installed Next.js version)
+- npm
+- a modern browser with JavaScript and `localStorage` enabled
 
-1. **External cognition and cognitive offloading**  
-   Planning burden is shifted from working memory into a persistent, manipulable environment.
+## Quick start
 
-2. **Readiness over intention**  
-   A task can exist but still be non-executable. CityLife makes this explicit via activation rules.
+From the repository root:
 
-3. **Explainable systems behavior**  
-   Influence is computed from shortest road-path distance, then decayed and aggregated into visible metrics.
+```bash
+git clone https://github.com/ngpepin/CityLife.git
+cd CityLife
+./run_citylife.sh dev
+```
 
-4. **Motivation through construction**  
-   Users can iteratively test small structural changes and see immediate feedback, turning planning into an active design process.
+Open [http://localhost:3000/citylife](http://localhost:3000/citylife).
 
-## What Is Implemented Now
+The root launcher installs dependencies when `node_modules/` is missing and then starts the app from `isometric-city/`. Its explicit modes are:
 
-CityLife mode in `isometric-city` currently provides:
+```bash
+./run_citylife.sh dev
+./run_citylife.sh build
+./run_citylife.sh prod
+```
 
-- dedicated route: `/citylife`
-- curated CityLife toolset (Road, Bulldoze, House, School, Office, Factory, Hospital, Mall, Park)
-- random variant assignment for multi-option categories (e.g., multiple House/Office/Factory variants)
-- starter city generation matching the prior concept layout
-- top-level metric cards for Income/Happiness/Wellness
-- influence summary panel with strongest distance-weighted edges
+Calling the launcher without a mode defaults to `prod`, which builds before starting.
 
-## Core Rules (Current Runtime)
-
-CityLife mode intentionally simplifies base IsoCity mechanics:
-
-- zoning is not required for CityLife placement
-- power/water gating is disabled for CityLife behavior
-- buildings are forced to complete immediately
-- budget is effectively unlimited in CityLife mode
-
-CityLife-specific activation and influence rules:
-
-- buildings contribute as **active** only when orthogonally adjacent to at least one road tile
-- influence distance is the shortest path over road/bridge tiles
-- influence strength decays exponentially with distance and is thresholded
-
-## Formal Influence Sketch
-
-The conceptual influence function used in the paper and mirrored by implementation logic:
-
-`w_ij = a_i * a_j * exp(-d_ij / lambda)` for `d_ij <= d_max`, otherwise `0`
-
-Where:
-
-- `a_i`, `a_j`: active-state gates
-- `d_ij`: BFS shortest road-path distance between node-adjacent road sets
-- `lambda`: decay constant
-- `d_max`: max interaction distance
-
-Node and pairwise effects then aggregate into bounded metrics `[Income, Happiness, Wellness]`.
-
-## Building Categories and Tool Mapping
-
-CityLife tool categories map to conceptual life domains:
-
-- **Housing**: baseline stability/population support
-- **Work (Current)**: immediate income (often with tradeoffs)
-- **Work (Capacity)**: future capability and planning support
-- **Health**: wellness stabilization
-- **Leisure**: happiness and recovery support
-- **Development**: long-term growth support
-
-Current tool-to-variant behavior:
-
-- House: randomized housing variant
-- School: randomized school/university variant
-- Office: randomized office variant
-- Factory: randomized industrial variant
-- Mall: randomized shop/mall variant
-- Park: randomized park variant
-- Hospital: fixed hospital variant
-
-Sprite pack target for CityLife mode:
-
-- `CITYLIFE_SPRITE_PACK_ID = "sprites4-ages-modern"` in `isometric-city/src/lib/citylife.ts`
-
-## Quick Start
-
-Run from the engine directory:
+To work directly in the app subtree instead:
 
 ```bash
 cd isometric-city
-npm install
+npm ci
 npm run dev
 ```
 
-Open:
+Useful routes:
 
-- `http://localhost:3000/citylife` for CityLife mode
-- `http://localhost:3000/` for standard IsoCity mode
+| Route | Purpose |
+| --- | --- |
+| `/citylife` | Primary CityLife planning product |
+| `/` | Base IsoCity city-building mode |
+| `/coaster` | Base IsoCoaster mode |
 
-## Architecture Pointers
+## First planning loop
 
-Primary CityLife files:
+1. On the first visit, choose **Explore an example**, **Start with a blank city**, or **Import a workspace**. A valid saved workspace loads automatically on later visits.
+2. In **Quick capture**, name an activity, choose its category, and select **Place**.
+3. Click an empty land tile. CityLife creates the activity and opens its editor.
+4. Add a next action, status, priority, due date, notes, or checklist items.
+5. Add roads next to the activity. Orthogonal road adjacency makes it active in the scoring model.
+6. Select an activity to inspect its readiness and score contribution.
+7. Use **Move** and choose an empty destination. The title, stable ID, and other details move with it.
+8. Select a score card or **Why these scores?** to inspect attribution and relationship effects.
 
-- `isometric-city/src/app/citylife/page.tsx`
-- `isometric-city/src/components/citylife/CityLifeMode.tsx`
-- `isometric-city/src/lib/citylife.ts`
+The **Build directly** tools skip quick capture and place a category variant with default metadata. Select the resulting building and choose **Edit details** to personalize it.
+
+### Actions and data safety
+
+- **Undo** restores one previous in-memory plan state. There is no redo, and undo history does not survive a reload.
+- **Bulldoze** removes the road or activity you click without an additional confirmation.
+- **Reset example** asks for confirmation and replaces the current plan with the example plan. The immediately preceding state can normally be restored with Undo.
+- **Export JSON** attempts to save the current plan locally, then downloads a portable plaintext backup even when browser storage is unavailable.
+- **Import JSON** accepts CityLife exports up to 15 MB, validates the workspace, migrates legacy activity metadata where possible, and replaces the current plan.
+
+Export before clearing browser site data or making a destructive change you may want to revisit.
+
+## How the model works
+
+### Readiness
+
+- **Needs road:** the activity is not orthogonally adjacent to a road or bridge and does not contribute.
+- **Road active, but isolated:** the activity contributes its category's base effect but has no qualifying relationship with another activity.
+- **Connected:** the activity is road-active and participates in at least one retained relationship.
+
+The user-assigned workflow statuses—Backlog, Active, Blocked, and Done—are metadata only. They do not currently change road readiness or scores.
+
+### Relationships and scores
+
+For each pair of road-active activities, CityLife finds the shortest path between their adjacent-road sets using breadth-first search over road and bridge tiles. Influence decays exponentially with road distance and is discarded beyond the configured distance or below the configured threshold.
+
+The implementation uses:
+
+- maximum road distance: `18`
+- decay constant: `6`
+- edge threshold: `0.08`
+- score baseline: Income `5`, Happiness `50`, Wellness `50`
+- output bounds: `0` to `100`
+
+Category base effects and qualifying pair effects are added to the baseline. A relationship is retained only when its category pair has a modeled non-zero effect. Full details are in [ARCHITECTURE.md](ARCHITECTURE.md).
+
+Roads currently represent undirected access and support pathways. They do not encode ordered prerequisites such as “finish A before B.”
+
+## Saving and portability
+
+CityLife has its own persistence layer, separate from the base IsoCity save system:
+
+- one workspace is autosaved for the current browser origin under `citylife-workspace-v1`
+- saves are debounced after plan changes and attempted again before the page unloads
+- exported files use the `citylife-workspace` envelope at version `1`
+- legacy raw CityLife game-state JSON can also be imported when it passes validation
+- clearing site data, using a private browsing session, or changing browser profiles can remove or isolate the local workspace
+
+There is no CityLife account, cloud synchronization, or multi-device merge.
+
+## Development and verification
+
+Run app commands from `isometric-city/`:
+
+```bash
+npm test
+npm run lint
+npx tsc --noEmit --incremental false
+npm run build
+```
+
+`npm test` runs the focused Vitest domain/storage suite. It covers road gating and distance, bridge connectivity, symmetric relationship effects, successful and rejected moves, workspace round trips, migration, local storage, and malformed import rejection. It does not cover browser interaction or end-to-end rendering.
+
+The full app-subtree lint command currently exits non-zero on existing findings in older engine and coaster files; use its output to distinguish those from changes in the files you touch. `npm run build` runs the image-compression script before the Next.js build and can generate updated WebP assets.
+
+For a CityLife smoke test, verify at least:
+
+- onboarding appears only when no valid local workspace exists
+- capture, edit, task checklist, move, bulldoze, and one-step undo work
+- reload restores the locally saved plan
+- export/import round-trips activity metadata and positions
+- road adjacency and road topology update readiness, scores, and relationships
+- reset requires confirmation
+- `/` still loads the base IsoCity mode with its canonical multi-tile footprints, costs, and tile details
+
+The repository's coding invariants and broader manual checklist are in [AGENTS.md](AGENTS.md).
+
+## Repository map
+
+| Path | Role |
+| --- | --- |
+| `isometric-city/` | Active Next.js runtime containing CityLife and the base engine modes |
+| `citylife-config/citylifeSpriteMapping.json` | Root-owned CityLife sprite-mapping source of truth |
+| `run_citylife.sh` | Root launcher for development, build, and production |
+| `paper/` | Conceptual and research material; it is not a shipped-feature specification |
+| `old-approach/` | Documentation from the retired plain-HTML prototype |
+| `index.html`, `js/`, `styles.css` | Historical prototype runtime; not the active app |
+| `assets/`, `tools/` | Source art and asset-generation utilities |
+
+Documentation:
+
+- [Architecture and data flow](ARCHITECTURE.md)
+- [Engine-subtree guide](isometric-city/README.md)
+- [Agent handoff and invariants](AGENTS.md)
+- [Concept paper](paper/Paper_draft.md)
+- [Archived prototype documentation](old-approach/README.md)
+- [Earlier implementation plan](NEXT-STEPS.md)—useful design context, but its “current gaps” section predates the implemented persistent-commitments work
+
+## Sprite mapping source of truth
+
+Edit only:
+
 - `citylife-config/citylifeSpriteMapping.json`
-- `isometric-city/src/lib/citylifeSpriteMapping.ts`
-- `isometric-city/src/context/GameContext.tsx`
-- `isometric-city/src/lib/simulation.ts`
-- `isometric-city/src/components/game/CanvasIsometricGrid.tsx`
 
-## Sprite Mapping Source of Truth
+The app imports a generated copy at `isometric-city/src/config/citylifeSpriteMapping.json`. The sync script `isometric-city/scripts/sync-citylife-config.mjs` copies the root file before `dev`, `build`, and `start` through npm lifecycle hooks.
 
-CityLife category-to-sprite selection is now controlled from a single JSON file:
+The JSON controls sprite sheets, building-type-to-art groups, and sprite coordinates. It does **not** control CityLife's semantic categories, tool variants, or metric coefficients; those remain in `isometric-city/src/lib/citylife.ts`.
 
-- `citylife-config/citylifeSpriteMapping.json`
+## Privacy and network behavior
 
-You can:
+- Activity details and the CityLife workspace are stored in browser `localStorage`; the CityLife storage module does not send the workspace to Supabase or another CityLife backend.
+- JSON exports are unencrypted plaintext and may contain personal titles, notes, due dates, next actions, and tasks.
+- The shared app layout includes Vercel Analytics.
+- Opening **Relationship graph** loads `vis-network` from `unpkg.com`; that view therefore requires network access unless the dependency is changed or locally hosted.
 
-- map each category (`house`, `school`, `office`, `factory`, `hospital`, `mall`, `park`) to one or more grid coordinates
-- point each coordinate to any configured sheet (for example `modern` or `dense`)
-- add more sheets under `sheets` with custom `src`, `cols`, and `rows`
+Do not treat the current deployed app as fully offline or as a repository for highly sensitive information without reviewing the hosting and analytics configuration.
 
-Rendering uses deterministic per-tile selection from the list so variants stay stable.
+## Current limitations
 
-For app compatibility, `isometric-city/src/config/citylifeSpriteMapping.json` is synced from the root file by:
+- Scores are heuristic scenario-comparison signals; personal metadata and task completion do not calibrate them.
+- Roads encode undirected access and influence, not directed dependencies.
+- Only one browser-local CityLife workspace is managed at a time.
+- Undo is one step and in-memory only.
+- There is no cloud sync, account system, model editor, Kanban/Gantt view, maintenance/decay loop, or LLM advisor in `/citylife`.
+- The relationship graph depends on a third-party CDN and displays a sparse subset of the strongest edges.
+- Automated coverage currently focuses on domain and storage logic; browser component and full end-to-end tests are not configured.
+- CityLife and IsoCity still share placement, simulation, and rendering code, so changes at those seams require both routes to be regression-tested.
 
-- `isometric-city/scripts/sync-citylife-config.mjs`
-- automatic npm lifecycle hooks: `predev`, `prebuild`, and `prestart`
+## Licensing
 
-## Decoupling Architecture
+Licensing differs by subtree:
 
-CityLife aims to use `isometric-city` as an engine resource, not as the primary home for CityLife-specific logic and configuration.
+- [LICENSE.md](LICENSE.md) contains the repository-root PolyForm Noncommercial terms.
+- [isometric-city/LICENSE](isometric-city/LICENSE) contains the MIT license and upstream copyright notice for the engine subtree.
 
-Practical rules:
-
-- prefer root-owned CityLife files for source-of-truth config and project-specific assets
-- keep `isometric-city` integration shallow through adapters/sync scripts
-- avoid deep engine rewrites when a root-level override or mapping can solve the need
-
-Current pattern in this repo:
-
-- edit CityLife sprite/category mapping at `citylife-config/citylifeSpriteMapping.json`
-- sync into engine runtime path via `isometric-city/scripts/sync-citylife-config.mjs`
-- run through `./run_citylife.sh` or normal npm scripts (`predev`, `prebuild`, `prestart` sync automatically)
-
-## Repository Layout
-
-- `isometric-city/`: active engine/framework codebase
-- `old-approach/`: archived pre-engine prototype docs/scripts
-- `paper/`: concept notes and draft paper material
-- `assets/`: source assets and references from migration work
-
-## Research Direction
-
-The paper proposes CityLife as a research-backed metaphor for executive-function support and a testbed for:
-
-- measuring initiation and planning improvements against list-based tools
-- evaluating whether visual readiness/dependency encoding reduces overwhelm
-- testing whether construction-style interaction improves engagement
-- adding explainable advisor support grounded in graph paths and metric attribution
-
-See `paper/Paper_draft.md` for full rationale, mechanisms, and hypotheses.
-
-## Development Notes
-
-- use `isometric-city` as the working directory for app commands
-- root-level legacy files (`index.html`, `js/`, `styles.css`) are historical, not active runtime
-- if Next.js warns about workspace root inference, launch from `isometric-city/` (already configured with `outputFileTracingRoot` in `isometric-city/next.config.js`)
-
-## Related Documentation
-
-- archived prototype docs:
-  - `old-approach/README.md`
-  - `old-approach/AGENTS.md`
-- engine docs:
-  - `isometric-city/README.md`
-  - `isometric-city/AGENTS.md`
-- concept docs:
-  - `paper/description.md`
-  - `paper/Paper_draft.md`
-
-## License Notes
-
-Licensing differs by subtree. Review both:
-
-- `LICENSE.md` (repository-root legacy/project terms)
-- `isometric-city/LICENSE` (engine subtree license)
+Review both files before redistribution, especially when combining root project material with the engine subtree.

@@ -151,10 +151,14 @@ export interface AdvisorMessage {
   priority: 'low' | 'medium' | 'high' | 'critical';
 }
 
+/** Runtime product mode. Route/provider choice is authoritative; city names are presentation data. */
+export type GameMode = 'isocity' | 'citylife';
+
 export interface GameState {
   id: string;
   grid: Tile[][];
   gridSize: number;
+  gameMode: GameMode;
   cityName: string;
   year: number;
   month: number;

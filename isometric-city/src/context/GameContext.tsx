@@ -1,13 +1,14 @@
 // Consolidated GameContext for the SimCity-like game
 'use client';
 
-import React, { createContext, useCallback, useContext, useEffect, useState, useRef } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useState, useRef } from 'react';
 import { compressToUTF16, decompressFromUTF16 } from 'lz-string';
 import { serializeAndCompressAsync } from '@/lib/saveWorkerManager';
 import { simulateTick } from '@/lib/simulation';
 import {
   Budget,
   BuildingType,
+  GameMode,
   GameState,
   SavedCityMeta,
   Tool,
@@ -36,7 +37,11 @@ import {
   setActiveSpritePack,
   SpritePack,
 } from '@/lib/renderConfig';
-import { getCityLifeToolBuildingOptions, placeCityLifeToolBuilding } from '@/lib/citylife';
+import {
+  CITYLIFE_SPRITE_PACK_ID,
+  getCityLifeToolBuildingOptions,
+  placeCityLifeToolBuilding,
+} from '@/lib/citylife';
 
 const STORAGE_KEY = 'isocity-game-state';
 const SAVED_CITY_STORAGE_KEY = 'isocity-saved-city'; // For restoring after viewing shared city
@@ -56,10 +61,13 @@ export type SavedCityInfo = {
 } | null;
 
 type GameContextValue = {
+  gameMode: GameMode;
   state: GameState;
   // PERF: Ref to latest state for real-time access without React re-renders
   // Canvas should use this instead of state.grid for smooth updates
   latestStateRef: React.RefObject<GameState>;
+  /** Apply a synchronous domain update without serializing/reloading the whole game. */
+  updateGameState: (updater: (state: GameState) => GameState) => void;
   setTool: (tool: Tool) => void;
   setSpeed: (speed: 0 | 1 | 2 | 3) => void;
   setTaxRate: (rate: number) => void;
@@ -184,7 +192,7 @@ function loadGameState(): GameState | null {
       // Try to decompress first (new format)
       // If it fails or returns null/garbage, fall back to parsing as plain JSON (legacy format)
       let jsonString = decompressFromUTF16(saved);
-      
+
       // Check if decompression returned valid-looking JSON (should start with '{')
       // lz-string can return garbage strings when given invalid input
       if (!jsonString || !jsonString.startsWith('{')) {
@@ -198,7 +206,7 @@ function loadGameState(): GameState | null {
           return null;
         }
       }
-      
+
       const parsed = JSON.parse(jsonString);
       // Validate it has essential properties
       if (parsed && 
@@ -615,7 +623,7 @@ function loadCityState(cityId: string): GameState | null {
       // Try to decompress first (new format)
       // lz-string can return garbage when given invalid input, so check for valid JSON start
       let jsonString = decompressFromUTF16(saved);
-      
+
       // Check if decompression returned valid-looking JSON
       if (!jsonString || !jsonString.startsWith('{')) {
         // Check if saved string itself is JSON (legacy uncompressed format)
@@ -627,7 +635,7 @@ function loadCityState(cityId: string): GameState | null {
           return null;
         }
       }
-      
+
       const parsed = JSON.parse(jsonString);
       if (parsed && parsed.grid && parsed.gridSize && parsed.stats) {
         return parsed as GameState;
@@ -653,13 +661,17 @@ export function GameProvider({
   children,
   startFresh = false,
   disablePersistence = false,
+  gameMode = 'isocity',
 }: {
   children: React.ReactNode;
   startFresh?: boolean;
   disablePersistence?: boolean;
+  gameMode?: GameMode;
 }) {
   // Start with a default state, we'll load from localStorage after mount (unless startFresh is true)
-  const [state, setState] = useState<GameState>(() => createInitialGameState(DEFAULT_GRID_SIZE, 'IsoCity'));
+  const [state, setState] = useState<GameState>(() =>
+    createInitialGameState(DEFAULT_GRID_SIZE, gameMode === 'citylife' ? 'CityLife' : 'IsoCity', gameMode),
+  );
   
   const [hasExistingGame, setHasExistingGame] = useState(false);
   const [isStateReady, setIsStateReady] = useState(false);
@@ -673,7 +685,9 @@ export function GameProvider({
   const bridgeCallbackRef = useRef<((args: { pathTiles: { x: number; y: number }[]; trackType: 'road' | 'rail' }) => void) | null>(null);
   
   // Sprite pack state
-  const [currentSpritePack, setCurrentSpritePack] = useState<SpritePack>(() => getSpritePack(DEFAULT_SPRITE_PACK_ID));
+  const [currentSpritePack, setCurrentSpritePack] = useState<SpritePack>(() =>
+    getSpritePack(gameMode === 'citylife' ? CITYLIFE_SPRITE_PACK_ID : DEFAULT_SPRITE_PACK_ID)
+  );
   
   // Day/night mode state
   const [dayNightMode, setDayNightModeState] = useState<DayNightMode>('auto');
@@ -683,43 +697,55 @@ export function GameProvider({
   
   // Load game state and sprite pack from localStorage on mount (client-side only)
   useEffect(() => {
-    // Load sprite pack preference
-    const savedPackId = loadSpritePackId();
-    const pack = getSpritePack(savedPackId);
-    setCurrentSpritePack(pack);
-    setActiveSpritePack(pack);
-    
-    // Load day/night mode preference
-    const savedDayNightMode = loadDayNightMode();
-    setDayNightModeState(savedDayNightMode);
-    
-    if (!disablePersistence) {
-      // Load saved cities index
-      const cities = loadSavedCitiesIndex();
-      setSavedCities(cities);
+    let cancelled = false;
+    window.queueMicrotask(() => {
+      if (cancelled) return;
+      // Load sprite pack preference
+      const savedPackId = loadSpritePackId();
+      // CityLife's pack is a route-scoped override. Do not overwrite the user's
+      // persistent IsoCity preference merely by visiting /citylife.
+      const pack = getSpritePack(
+        gameMode === 'citylife' ? CITYLIFE_SPRITE_PACK_ID : savedPackId
+      );
+      setCurrentSpritePack(pack);
+      setActiveSpritePack(pack);
 
-      // Load game state (unless startFresh is true - used for co-op to start with a new city)
-      if (!startFresh) {
-        const saved = loadGameState();
-        if (saved) {
-          skipNextSaveRef.current = true; // Set skip flag BEFORE updating state
-          setState(saved);
-          setHasExistingGame(true);
+      // Load day/night mode preference
+      const savedDayNightMode = loadDayNightMode();
+      setDayNightModeState(savedDayNightMode);
+
+      if (!disablePersistence) {
+        // Load saved cities index
+        const cities = loadSavedCitiesIndex();
+        setSavedCities(cities);
+
+        // Load game state (unless startFresh is true - used for co-op to start with a new city)
+        if (!startFresh) {
+          const saved = loadGameState();
+          if (saved) {
+            skipNextSaveRef.current = true; // Set skip flag BEFORE updating state
+            setState({ ...saved, gameMode });
+            setHasExistingGame(true);
+          } else {
+            setHasExistingGame(false);
+          }
         } else {
           setHasExistingGame(false);
         }
       } else {
+        setSavedCities([]);
         setHasExistingGame(false);
       }
-    } else {
-      setSavedCities([]);
-      setHasExistingGame(false);
-    }
-    // Mark as loaded immediately - the skipNextSaveRef will handle skipping the first save
-    hasLoadedRef.current = true;
-    // Mark state as ready - consumers should wait for this before using state
-    setIsStateReady(true);
-  }, [startFresh, disablePersistence]);
+      // Mark as loaded immediately - the skipNextSaveRef will handle skipping the first save
+      hasLoadedRef.current = true;
+      // Mark state as ready - consumers should wait for this before using state
+      setIsStateReady(true);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [startFresh, disablePersistence, gameMode]);
   
   // Track the state that needs to be saved
   const lastSaveTimeRef = useRef<number>(0);
@@ -729,7 +755,9 @@ export function GameProvider({
   // PERF: Just mark that state has changed - defer expensive deep copy to actual save time
   const stateChangedRef = useRef(false);
   const latestStateRef = useRef(state);
-  latestStateRef.current = state;
+  useLayoutEffect(() => {
+    latestStateRef.current = state;
+  }, [state]);
   
   useEffect(() => {
     if (!hasLoadedRef.current) {
@@ -818,7 +846,7 @@ export function GameProvider({
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | null = null;
 
-    if (state.speed > 0) {
+    if (gameMode === 'isocity' && state.speed > 0) {
       // Check if running on mobile for performance optimization
       const isMobileDevice = typeof window !== 'undefined' && (
         window.innerWidth < 768 ||
@@ -856,10 +884,14 @@ export function GameProvider({
         clearInterval(timer);
       }
     };
-  }, [state.speed]);
+  }, [gameMode, state.speed]);
 
   const setTool = useCallback((tool: Tool) => {
     setState((prev) => ({ ...prev, selectedTool: tool, activePanel: 'none' }));
+  }, []);
+
+  const updateGameState = useCallback((updater: (current: GameState) => GameState) => {
+    setState((current) => updater(current));
   }, []);
 
   const setSpeed = useCallback((speed: 0 | 1 | 2 | 3) => {
@@ -903,7 +935,7 @@ export function GameProvider({
       const info = TOOL_INFO[tool];
       const cost = info?.cost ?? 0;
       const tile = prev.grid[y]?.[x];
-      const hasUnlimitedBudget = prev.cityName === 'CityLife';
+      const hasUnlimitedBudget = gameMode === 'citylife';
       const cityLifeOptions = hasUnlimitedBudget ? getCityLifeToolBuildingOptions(tool) : null;
 
       if (!tile) return prev;
@@ -1007,7 +1039,7 @@ export function GameProvider({
     if (!isRemote && currentTool !== 'select' && placeCallbackRef.current) {
       placeCallbackRef.current({ x, y, tool: currentTool });
     }
-  }, []);
+  }, [gameMode]);
 
   const upgradeServiceBuildingHandler = useCallback((x: number, y: number) => {
     let upgradeSucceeded = false;
@@ -1162,13 +1194,17 @@ export function GameProvider({
 
   const newGame = useCallback((name?: string, size?: number) => {
     clearGameState(); // Clear saved state when starting fresh
-    const fresh = createInitialGameState(size ?? DEFAULT_GRID_SIZE, name || 'IsoCity');
+    const fresh = createInitialGameState(
+      size ?? DEFAULT_GRID_SIZE,
+      name || (gameMode === 'citylife' ? 'CityLife' : 'IsoCity'),
+      gameMode,
+    );
     // Increment gameVersion from current state to ensure vehicles/entities are cleared
     setState((prev) => ({
       ...fresh,
       gameVersion: (prev.gameVersion ?? 0) + 1,
     }));
-  }, []);
+  }, [gameMode]);
 
   const loadState = useCallback((stateString: string): boolean => {
     try {
@@ -1182,6 +1218,8 @@ export function GameProvider({
           parsed.stats &&
           parsed.stats.money !== undefined &&
           parsed.stats.population !== undefined) {
+        // The provider/route owns the product mode; imported names are not mode switches.
+        parsed.gameMode = gameMode;
         // Ensure new fields exist for backward compatibility
         if (!parsed.adjacentCities) {
           parsed.adjacentCities = [];
@@ -1247,7 +1285,7 @@ export function GameProvider({
     } catch {
       return false;
     }
-  }, []);
+  }, [gameMode]);
 
   const exportState = useCallback((): string => {
     return JSON.stringify(state);
@@ -1496,12 +1534,12 @@ export function GameProvider({
     const savedState = loadSavedCityState();
     if (savedState) {
       skipNextSaveRef.current = true;
-      setState(savedState);
+      setState({ ...savedState, gameMode });
       clearSavedCityStorage();
       return true;
     }
     return false;
-  }, []);
+  }, [gameMode]);
 
   // Get saved city info
   const getSavedCityInfo = useCallback((): SavedCityInfo => {
@@ -1617,6 +1655,7 @@ export function GameProvider({
     skipNextSaveRef.current = true;
     setState((prev) => ({
       ...cityState,
+      gameMode,
       gameVersion: (prev.gameVersion ?? 0) + 1,
     }));
     
@@ -1624,7 +1663,7 @@ export function GameProvider({
     saveGameState(cityState);
     
     return true;
-  }, []);
+  }, [gameMode]);
 
   // Delete a saved city from the multi-save system
   const deleteSavedCity = useCallback((cityId: string) => {
@@ -1664,8 +1703,10 @@ export function GameProvider({
   }, [state.id]);
 
   const value: GameContextValue = {
+    gameMode,
     state,
     latestStateRef,
+    updateGameState,
     setTool,
     setSpeed,
     setTaxRate,
